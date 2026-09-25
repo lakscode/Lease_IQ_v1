@@ -3,10 +3,14 @@ import type { DocType } from './leases'
 
 export type ChatSource = { leaseId: string; title: string; docType: DocType; page: number }
 
+export type ChatUsage = { input: number; output: number }
+
 export type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   sources?: ChatSource[]
+  // Tokens used to produce this answer (every Claude request made while searching).
+  usage?: ChatUsage
   error?: boolean
 }
 
@@ -59,9 +63,9 @@ function chatTitle(messages: ChatMessage[]) {
 }
 
 /** Asks the lease-chat Edge Function; history is every earlier message in the conversation. */
-export async function askLeaseQuestion(history: ChatMessage[], leaseId: string | null) {
+export async function askLeaseQuestion(history: ChatMessage[], leaseId: string | null, chatId: string | null) {
   const messages = history.filter((m) => !m.error).map(({ role, content }) => ({ role, content }))
-  const { data, error } = await supabase.functions.invoke('lease-chat', { body: { messages, leaseId } })
+  const { data, error } = await supabase.functions.invoke('lease-chat', { body: { messages, leaseId, chatId } })
   if (error) {
     if (error.name === 'FunctionsFetchError') {
       throw new Error('Could not reach the "lease-chat" Edge Function. Make sure it is deployed to your Supabase project.')
@@ -70,5 +74,5 @@ export async function askLeaseQuestion(history: ChatMessage[], leaseId: string |
     const body = await error.context?.json?.().catch(() => null)
     throw new Error(body?.error ?? error.message)
   }
-  return data as { answer: string; sources: ChatSource[] }
+  return data as { answer: string; sources: ChatSource[]; usage?: ChatUsage }
 }

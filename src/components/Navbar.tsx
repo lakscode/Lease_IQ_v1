@@ -19,7 +19,7 @@ export function Navbar() {
           <>
             <Link to="/dashboard">Dashboard</Link>
             <Link to="/leases">Lease Abstraction</Link>
-            <Link to="/chat">Chat</Link>
+            <Link to="/chat">Lease Assistant</Link>
             {isSuperAdmin && (
               <>
                 <Link to="/settings">Settings</Link>

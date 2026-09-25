@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { DOC_TYPE_LABELS, type Lease } from '../lib/leases'
+import { DOC_TYPE_LABELS, formatTokens, type Lease } from '../lib/leases'
+import { useDialog } from '../components/Dialog'
 import { askLeaseQuestion, deleteChat, fetchChat, listChats, saveChat, type ChatMessage, type LeaseChatSummary } from '../lib/chat'
 
 const SUGGESTIONS = [
@@ -29,6 +30,7 @@ export function Chat() {
   const [busy, setBusy] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const dialog = useDialog()
   // The chat whose messages are in state, so reopening it doesn't refetch.
   const loadedChatId = useRef<string | null>(null)
 
@@ -85,10 +87,24 @@ export function Chat() {
     setMessages(history)
     setInput('')
     setBusy(true)
+    // A new chat is saved before asking, so the question's token usage can be linked to it.
+    let id = chatId
+    if (!id) {
+      try {
+        const created = await saveChat(null, leaseId, history)
+        id = created.id
+        setChats((list) => [created, ...list])
+        loadedChatId.current = created.id
+        setUrl(created.id, leaseId)
+      } catch (err) {
+        setHistoryError(`Could not save this chat: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
     let reply: ChatMessage
     try {
-      const { answer, sources } = await askLeaseQuestion(history, leaseId)
-      reply = { role: 'assistant', content: answer, sources }
+      const { answer, sources, usage } = await askLeaseQuestion(history, leaseId, id)
+      reply = { role: 'assistant', content: answer, sources, usage }
     } catch (err) {
       reply = { role: 'assistant', content: err instanceof Error ? err.message : String(err), error: true }
     }
@@ -97,9 +113,9 @@ export function Chat() {
     setBusy(false)
 
     try {
-      const saved = await saveChat(chatId, leaseId, all)
+      const saved = await saveChat(id, leaseId, all)
       setChats((list) => [saved, ...list.filter((c) => c.id !== saved.id)])
-      if (saved.id !== chatId) {
+      if (saved.id !== id) {
         loadedChatId.current = saved.id
         setUrl(saved.id, leaseId)
       }
@@ -112,7 +128,13 @@ export function Chat() {
   const newChat = () => setUrl(null, leaseId)
 
   const removeChat = async (chat: LeaseChatSummary) => {
-    if (!confirm(`Delete the chat "${chat.title}"?`)) return
+    const ok = await dialog.confirm({
+      title: 'Delete this chat?',
+      message: <>“{chat.title}” will be deleted. This can't be undone.</>,
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await deleteChat(chat.id)
       setChats((list) => list.filter((c) => c.id !== chat.id))
@@ -136,6 +158,10 @@ export function Chat() {
 
   const setScope = (id: string) => setUrl(chatId, id || null)
 
+  const answered = messages.filter((m) => m.usage)
+  const chatInput = answered.reduce((n, m) => n + (m.usage?.input ?? 0), 0)
+  const chatOutput = answered.reduce((n, m) => n + (m.usage?.output ?? 0), 0)
+
   return (
     <main className="container wide chat-page">
       <div className="page-header">
@@ -144,6 +170,14 @@ export function Chat() {
           <p className="muted">Ask anything about your leases. Answers are drawn from the lease text, with page references.</p>
         </div>
         <div className="chat-toolbar">
+          {answered.length > 0 && (
+            <span
+              className="muted small chat-usage-total"
+              title={`${chatInput.toLocaleString()} input and ${chatOutput.toLocaleString()} output tokens over ${answered.length} ${answered.length === 1 ? 'answer' : 'answers'}`}
+            >
+              This chat: {formatTokens(chatInput)} in · {formatTokens(chatOutput)} out
+            </span>
+          )}
           <select className="select" value={leaseId ?? ''} onChange={(e) => setScope(e.target.value)} aria-label="Documents to search">
             <option value="">All documents</option>
             {leases.map((l) => (
@@ -198,7 +232,15 @@ export function Chat() {
             {messages.map((m, i) => (
               <div key={i} className={`chat-msg chat-${m.role}${m.error ? ' chat-error' : ''}`}>
                 <div className="chat-bubble">{m.role === 'assistant' ? renderText(m.content) : m.content}</div>
-                {m.sources && m.sources.length > 0 && (
+                {m.usage && (
+                <div
+                  className="muted small chat-usage"
+                  title={`${m.usage.input.toLocaleString()} input tokens · ${m.usage.output.toLocaleString()} output tokens`}
+                >
+                  {formatTokens(m.usage.input)} in · {formatTokens(m.usage.output)} out
+                </div>
+              )}
+              {m.sources && m.sources.length > 0 && (
                   <div className="chat-sources">
                     <span className="muted small">Sources:</span>
                     {m.sources.map((s) => (

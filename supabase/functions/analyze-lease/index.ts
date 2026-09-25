@@ -13,10 +13,10 @@ import { classifyClause, loadClauseModel, splitClauses, type ClauseModel, type C
 import clauseModelJson from './clause_model.json' with { type: 'json' }
 // Gitignored; copy config.example.ts. Deployed together with this function.
 import { config } from './config.ts'
+import { fallbackParams, resolveModel } from '../_shared/model.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
-const MODEL = Deno.env.get('ANTHROPIC_MODEL') || config.anthropicModel || 'claude-opus-5'
 // ~1M token context; leave room for the prompt and output.
 const MAX_INPUT_CHARS = 2_500_000
 
@@ -45,7 +45,7 @@ const ABSTRACT_FIELDS = [
 
 // Bump when changing this function, together with EXPECTED_FUNCTION_VERSION in
 // src/lib/health.ts; returned in the x-function-version header.
-const FUNCTION_VERSION = '9'
+const FUNCTION_VERSION = '11'
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
 
   const { data: file, error: fileError } = await supabase
     .from('lease_files')
-    .select('id, page_count, status')
+    .select('id, page_count, status, file_name')
     .eq('id', fileId)
     .maybeSingle()
   if (fileError) {
@@ -243,10 +243,11 @@ Deno.serve(async (req) => {
   }
 
   setFile(fileId)
-  await log('info', 'start', `Analysis requested (function v${FUNCTION_VERSION}, model ${MODEL})`, {
+  const model = await resolveModel(supabase)
+  await log('info', 'start', `Analysis requested (function v${FUNCTION_VERSION}, model ${model})`, {
     previousStatus: file.status,
     pageCount: file.page_count,
-    model: MODEL,
+    model,
   })
 
   // A file that is not fresh from upload means this is a retry / re-analysis.
@@ -265,9 +266,16 @@ Deno.serve(async (req) => {
   if (statusError) await log('warn', 'status', `Could not set status to analyzing: ${statusError.message}`)
   else await log('info', 'status', 'File status set to analyzing')
 
+  const recordUsage = createUsageRecorder(supabase, log, {
+    file_id: fileId,
+    file_name: file.file_name,
+    process: file.status === 'processing' ? 'analysis' : 'reanalysis',
+    model,
+  })
+
   activeJobs.set(fileId, { log, supabase, startedAt: started })
   EdgeRuntime.waitUntil(
-    analyzeFile(supabase, fileId, file.page_count, log)
+    analyzeFile(supabase, fileId, file.page_count, model, recordUsage, log)
       .then(() => log('info', 'done', 'Analysis finished', { totalMs: elapsed(started) }))
       .catch(async (err) => {
         await log('error', 'failed', `Analysis failed: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
@@ -285,9 +293,46 @@ Deno.serve(async (req) => {
   return json({ status: 'analyzing', version: FUNCTION_VERSION }, 202)
 })
 
+// ---------- Token usage ----------
+
+// deno-lint-ignore no-explicit-any
+type RecordUsage = (message: any, durationMs: number) => Promise<void>
+
+/** Saves each Claude response's token usage to ai_usage; a failed insert is logged, never fatal. */
+function createUsageRecorder(
+  supabase: SupabaseClient,
+  log: Log,
+  base: { file_id: string; file_name: string; process: 'analysis' | 'reanalysis'; model: string },
+): RecordUsage {
+  return async (message, durationMs) => {
+    const usage = message.usage ?? {}
+    const row = {
+      ...base,
+      served_by: message.model ?? null,
+      stop_reason: message.stop_reason ?? null,
+      input_tokens: usage.input_tokens ?? 0,
+      output_tokens: usage.output_tokens ?? 0,
+      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+      cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+      usage,
+      duration_ms: Math.round(durationMs),
+    }
+    const { error } = await supabase.from('ai_usage').insert(row)
+    if (error) await log('warn', 'usage', `Could not save token usage: ${error.message}`, row)
+    else await log('info', 'usage', `Token usage saved: ${row.input_tokens} input, ${row.output_tokens} output`)
+  }
+}
+
 // ---------- Analysis ----------
 
-async function analyzeFile(supabase: SupabaseClient, fileId: string, pageCount: number, log: Log) {
+async function analyzeFile(
+  supabase: SupabaseClient,
+  fileId: string,
+  pageCount: number,
+  model: string,
+  recordUsage: RecordUsage,
+  log: Log,
+) {
   let stepStarted = Date.now()
   const { data: pages, error: pagesError } = await supabase
     .from('lease_file_pages')
@@ -330,7 +375,7 @@ async function analyzeFile(supabase: SupabaseClient, fileId: string, pageCount: 
     throw new Error('This file is too large to analyze in one pass. Split it into smaller PDFs and upload them separately.')
   }
 
-  const documents = await callClaude(pageText, pages.length, existingMains ?? [], log)
+  const documents = await callClaude(pageText, pages.length, existingMains ?? [], model, recordUsage, log)
 
   const { rows, links } = buildLeaseRows(documents, pageCount || pages.length, new Set((existingMains ?? []).map((m) => m.id)))
   await log('info', 'build-rows', `Prepared ${rows.length} document record(s)`, { links })
@@ -420,6 +465,8 @@ async function callClaude(
   pageText: string,
   pageCount: number,
   existingMains: Array<Record<string, unknown>>,
+  model: string,
+  recordUsage: RecordUsage,
   log: Log,
 ): Promise<ClaudeDocument[]> {
   if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'sk-ant-...') {
@@ -428,8 +475,8 @@ async function callClaude(
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY, baseURL: ANTHROPIC_BASE_URL })
 
   const started = Date.now()
-  await log('info', 'claude', `Sending request to Claude (${MODEL})`, {
-    model: MODEL,
+  await log('info', 'claude', `Sending request to Claude (${model})`, {
+    model,
     effort: 'high',
     maxTokens: 64000,
     pageCount,
@@ -437,10 +484,9 @@ async function callClaude(
   })
 
   const stream = client.beta.messages.stream({
-    model: MODEL,
+    model,
     max_tokens: 64000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
+    ...fallbackParams(model),
     thinking: { type: 'adaptive' },
     output_config: {
       effort: 'high',
@@ -495,7 +541,8 @@ async function callClaude(
     outputChars,
     ms: elapsed(started),
   })
-  if (fallbacks.length) await log('warn', 'claude', `Request was declined by ${MODEL} and served by ${message.model} via fallback`)
+  await recordUsage(message, elapsed(started))
+  if (fallbacks.length) await log('warn', 'claude', `Request was declined by ${model} and served by ${message.model} via fallback`)
 
   if (message.stop_reason === 'refusal') {
     // deno-lint-ignore no-explicit-any

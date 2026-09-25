@@ -4,20 +4,21 @@
 // function) and reading whole pages. It searches until it can answer, then
 // replies with page citations.
 //
-// POST { messages: [{ role: 'user' | 'assistant', content }], leaseId? }
-//   -> { answer, sources: [{ leaseId, title, docType, page }] }
+// POST { messages: [{ role: 'user' | 'assistant', content }], leaseId?, chatId? }
+//   -> { answer, sources: [{ leaseId, title, docType, page }], usage: { input, output } }
+// Each question's token usage is saved to ai_usage (process 'chat', linked to chatId).
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 // Shares the API key settings with analyze-lease (gitignored; see config.example.ts there).
 import { config } from '../analyze-lease/config.ts'
+import { fallbackParams, resolveModel } from '../_shared/model.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
-const MODEL = Deno.env.get('ANTHROPIC_MODEL') || config.anthropicModel || 'claude-opus-5'
 
-const FUNCTION_VERSION = '1'
+const FUNCTION_VERSION = '3'
 const MAX_TOOL_ROUNDS = 8
 const MAX_HISTORY = 20
 const MAX_MESSAGE_CHARS = 8000
@@ -116,6 +117,13 @@ Deno.serve(async (req) => {
   if (!history) return json({ error: 'messages must be a non-empty list ending with a user message' }, 400)
   const focusId = typeof body.leaseId === 'string' ? body.leaseId : null
 
+  // Saved chat this question belongs to (row level security: only the caller's own).
+  let chat: { id: string; title: string } | null = null
+  if (typeof body.chatId === 'string') {
+    const { data } = await supabase.from('lease_chats').select('id, title').eq('id', body.chatId).maybeSingle()
+    chat = data
+  }
+
   if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'sk-ant-...') {
     return json({ error: 'The Anthropic API key is not set. Put it in supabase/functions/analyze-lease/config.ts and redeploy.' }, 500)
   }
@@ -133,7 +141,7 @@ Deno.serve(async (req) => {
   const focus = focusId ? catalogue.get(focusId) : undefined
 
   try {
-    const result = await answer(supabase, catalogue, history, focus)
+    const result = await answer(supabase, catalogue, history, focus, chat)
     return json(result)
   } catch (err) {
     console.error(JSON.stringify({ v: FUNCTION_VERSION, step: 'failed', error: err instanceof Error ? err.message : String(err) }))
@@ -176,8 +184,80 @@ async function answer(
   catalogue: Map<string, CatalogueLease>,
   history: ChatTurn[],
   focus: CatalogueLease | undefined,
+  chat: { id: string; title: string } | null,
 ) {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY, baseURL: ANTHROPIC_BASE_URL })
+  const model = await resolveModel(supabase)
+  const usage = new UsageTally(model)
+  try {
+    const result = await runAnswerLoop(client, model, supabase, catalogue, history, focus, usage)
+    return { ...result, usage: usage.summary() }
+  } finally {
+    // Tokens are spent even when the loop fails part-way, so always record them.
+    await usage.save(supabase, chat)
+  }
+}
+
+/** Adds up the token usage of every Claude request made for one question. */
+class UsageTally {
+  input = 0
+  output = 0
+  cacheWrite = 0
+  cacheRead = 0
+  servedBy: string | null = null
+  stopReason: string | null = null
+  // deno-lint-ignore no-explicit-any
+  rounds: any[] = []
+  started = Date.now()
+
+  constructor(readonly model: string) {}
+
+  // deno-lint-ignore no-explicit-any
+  add(message: any) {
+    const u = message.usage ?? {}
+    this.input += u.input_tokens ?? 0
+    this.output += u.output_tokens ?? 0
+    this.cacheWrite += u.cache_creation_input_tokens ?? 0
+    this.cacheRead += u.cache_read_input_tokens ?? 0
+    this.servedBy = message.model ?? this.servedBy
+    this.stopReason = message.stop_reason ?? null
+    this.rounds.push(u)
+  }
+
+  /** Input counts every input token, including those written to or read from the prompt cache. */
+  summary() {
+    return { input: this.input + this.cacheWrite + this.cacheRead, output: this.output }
+  }
+
+  async save(supabase: SupabaseClient, chat: { id: string; title: string } | null) {
+    if (!this.rounds.length) return
+    const { error } = await supabase.from('ai_usage').insert({
+      process: 'chat',
+      chat_id: chat?.id ?? null,
+      chat_title: chat?.title ?? null,
+      model: this.model,
+      served_by: this.servedBy,
+      stop_reason: this.stopReason,
+      input_tokens: this.input,
+      output_tokens: this.output,
+      cache_creation_input_tokens: this.cacheWrite,
+      cache_read_input_tokens: this.cacheRead,
+      usage: { rounds: this.rounds },
+      duration_ms: Date.now() - this.started,
+    })
+    if (error) console.warn(JSON.stringify({ v: FUNCTION_VERSION, step: 'usage', message: `Could not save token usage: ${error.message}` }))
+  }
+}
+
+async function runAnswerLoop(
+  client: Anthropic,
+  model: string,
+  supabase: SupabaseClient,
+  catalogue: Map<string, CatalogueLease>,
+  history: ChatTurn[],
+  focus: CatalogueLease | undefined,
+  usage: UsageTally,
+) {
   const messages: Anthropic.Beta.BetaMessageParam[] = history.map((m, i) =>
     focus && i === history.length - 1
       ? { role: m.role, content: `(I'm looking at "${focus.title}", document id ${focus.id}.)\n\n${m.content}` }
@@ -194,10 +274,9 @@ async function answer(
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const message = await client.beta.messages.create({
-      model: MODEL,
+      model,
       max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
+      ...fallbackParams(model),
       thinking: { type: 'adaptive' },
       output_config: { effort: 'medium' },
       system: [
@@ -209,6 +288,7 @@ async function answer(
       messages,
     // deno-lint-ignore no-explicit-any
     } as any)
+    usage.add(message)
 
     console.log(JSON.stringify({ v: FUNCTION_VERSION, step: 'claude', round, stop: message.stop_reason, servedBy: message.model, usage: message.usage }))
 

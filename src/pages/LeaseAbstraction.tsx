@@ -2,9 +2,13 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   deleteLeaseFile,
+  formatTokens,
+  PROCESS_LABELS,
+  totalInputTokens,
   openStoredPdf,
   retryLeaseFile,
   uploadLeaseFile,
+  type AiUsage,
   type Lease,
   type LeaseFile,
   type Stage,
@@ -13,6 +17,7 @@ import { DocumentCells, fileDocuments } from '../components/LeaseDocuments'
 import { TextViewer } from '../components/TextViewer'
 import { LogViewer } from '../components/LogViewer'
 import { checkSetup, type SetupIssue } from '../lib/health'
+import { useDialog } from '../components/Dialog'
 
 const FINAL_STATUSES = new Set(['completed', 'failed'])
 const REFRESH_MS = 4000
@@ -40,6 +45,7 @@ function describeStage(s: Stage): { text: string; percent?: number } {
 export function LeaseAbstraction() {
   const [files, setFiles] = useState<LeaseFile[]>([])
   const [leases, setLeases] = useState<Lease[]>([])
+  const [usage, setUsage] = useState<AiUsage[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [upload, setUpload] = useState<{ name: string; stage: Stage } | null>(null)
@@ -52,12 +58,17 @@ export function LeaseAbstraction() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [setupIssues, setSetupIssues] = useState<SetupIssue[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialog = useDialog()
 
   const load = useCallback(async () => {
-    const [filesRes, leasesRes] = await Promise.all([
+    const [filesRes, leasesRes, usageRes] = await Promise.all([
       supabase.from('lease_files').select('*').order('created_at', { ascending: false }),
       supabase.from('leases').select('*'),
+      supabase.from('ai_usage').select('*').not('file_id', 'is', null).order('created_at'),
     ])
+    // Usage is extra detail; the table still loads without it.
+    if (usageRes.error) console.warn('[usage] loading ai_usage failed:', usageRes.error.message)
+    else setUsage(usageRes.data as AiUsage[])
     const err = filesRes.error ?? leasesRes.error
     if (err) setLoadError(err.message)
     else {
@@ -116,7 +127,16 @@ export function LeaseAbstraction() {
   const retry = async (file: LeaseFile, reanalyze = false) => {
     if (
       reanalyze &&
-      !confirm(`Re-analyze "${file.file_name}"? Its documents and clauses will be replaced with the results of a new AI analysis.`)
+      !(await dialog.confirm({
+        title: 'Re-analyze this file?',
+        message: (
+          <>
+            <strong>{file.file_name}</strong> will be analyzed again with AI. Its documents and clauses will be replaced with the
+            new results.
+          </>
+        ),
+        confirmLabel: 'Re-analyze',
+      }))
     ) {
       return
     }
@@ -132,16 +152,28 @@ export function LeaseAbstraction() {
   }
 
   const remove = async (file: LeaseFile) => {
-    if (!confirm(`Delete "${file.file_name}" and all documents extracted from it?`)) return
+    const ok = await dialog.confirm({
+      title: 'Delete this file?',
+      message: (
+        <>
+          <strong>{file.file_name}</strong> and every document extracted from it will be deleted. This can't be undone.
+        </>
+      ),
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await deleteLeaseFile(file)
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      await dialog.alert({ title: 'Could not delete the file', message: e instanceof Error ? e.message : String(e) })
     }
     await load()
   }
 
   const filesById = new Map(files.map((f) => [f.id, f]))
+  const usageByFile = new Map<string, AiUsage[]>()
+  for (const u of usage) if (u.file_id) usageByFile.set(u.file_id, [...(usageByFile.get(u.file_id) ?? []), u])
   const logFile = logFileId ? filesById.get(logFileId) : undefined
   const progress = upload ? describeStage(upload.stage) : null
 
@@ -247,7 +279,7 @@ export function LeaseAbstraction() {
                 <td rowSpan={span} className="file-cell">
                   <button
                     className="file-name"
-                    onClick={() => openStoredPdf(file.storage_path).catch((e) => alert(e.message))}
+                    onClick={() => openStoredPdf(file.storage_path).catch((e) => dialog.alert({ title: 'Could not open the PDF', message: e.message }))}
                     title="Open the original PDF"
                   >
                     {file.file_name}
@@ -265,6 +297,7 @@ export function LeaseAbstraction() {
                   <div className="muted small">
                     {file.page_count} {file.page_count === 1 ? 'page' : 'pages'} · {new Date(file.created_at).toLocaleString()}
                   </div>
+                  <UsageSummary runs={usageByFile.get(file.id) ?? []} />
                   {busy && <div className="muted small stage-detail">{describeStage(busy).text}</div>}
                   {!busy && file.status === 'failed' && file.error && <div className="error small">{file.error}</div>}
                 </td>
@@ -333,6 +366,28 @@ export function LeaseAbstraction() {
         />
       )}
     </main>
+  )
+}
+
+/** Token totals for a file, with each Claude request listed in the tooltip. */
+function UsageSummary({ runs }: { runs: AiUsage[] }) {
+  if (!runs.length) return null
+  const input = runs.reduce((n, u) => n + totalInputTokens(u), 0)
+  const output = runs.reduce((n, u) => n + u.output_tokens, 0)
+  const detail = runs
+    .map((u) => {
+      const cache = u.cache_read_input_tokens || u.cache_creation_input_tokens
+        ? ` (cache: ${formatTokens(u.cache_read_input_tokens)} read, ${formatTokens(u.cache_creation_input_tokens)} written)`
+        : ''
+      const served = u.served_by && u.served_by !== u.model ? `, served by ${u.served_by}` : ''
+      return `${new Date(u.created_at).toLocaleString()} · ${PROCESS_LABELS[u.process]} · ${u.model}${served}\n  ${totalInputTokens(u).toLocaleString()} input${cache}, ${u.output_tokens.toLocaleString()} output`
+    })
+    .join('\n')
+  return (
+    <div className="muted small usage-summary" title={detail}>
+      Tokens: {formatTokens(input)} in · {formatTokens(output)} out
+      {runs.length > 1 && ` · ${runs.length} runs`}
+    </div>
   )
 }
 

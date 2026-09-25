@@ -1,10 +1,32 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { DOC_TYPE_LABELS, openStoredPdf, type Lease, type LeaseFile } from '../lib/leases'
+import {
+  DOC_TYPE_LABELS,
+  fetchFileUsage,
+  formatTokens,
+  openStoredPdf,
+  PROCESS_LABELS,
+  totalInputTokens,
+  type AiUsage,
+  type Lease,
+  type LeaseFile,
+} from '../lib/leases'
 import { LeaseClauses } from '../components/LeaseClauses'
 import { TextViewer } from '../components/TextViewer'
+import { CamReconciliation } from '../components/CamReconciliation'
+import { useDialog } from '../components/Dialog'
 import { daysFromToday, latestExpiration, parseDate } from '../lib/leaseStatus'
+import { downloadLeaseReport, leaseSections } from '../lib/leaseReport'
+import {
+  fetchInsights,
+  groupInsights,
+  INSIGHT_STATUS_LABELS,
+  INSIGHTS_STALE_MS,
+  requestInsights,
+  type InsightGroup,
+  type LeaseInsights,
+} from '../lib/insights'
 
 const pages = (l: Lease) => (l.page_start === l.page_end ? `p. ${l.page_start}` : `p. ${l.page_start}–${l.page_end}`)
 
@@ -65,6 +87,187 @@ function Terms({ rows }: { rows: Array<[string, ReactNode, string?]> }) {
   )
 }
 
+const INSIGHTS_POLL_MS = 4000
+
+/** Revenue and risk opportunities of the lease family, generated on demand. */
+function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: string }) {
+  const [insights, setInsights] = useState<LeaseInsights | null | undefined>(undefined)
+  const [requesting, setRequesting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const generating =
+    insights?.status === 'generating' && Date.now() - new Date(insights.started_at).getTime() < INSIGHTS_STALE_MS
+
+  useEffect(() => {
+    fetchInsights(familyId).then(setInsights, (e) => setError(e.message))
+  }, [familyId])
+
+  useEffect(() => {
+    if (!generating) return
+    const t = setInterval(() => fetchInsights(familyId).then(setInsights, (e) => setError(e.message)), INSIGHTS_POLL_MS)
+    return () => clearInterval(t)
+  }, [generating, familyId])
+
+  const generate = async () => {
+    setRequesting(true)
+    setError(null)
+    try {
+      await requestInsights(leaseId)
+      setInsights(await fetchInsights(familyId))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRequesting(false)
+    }
+  }
+
+  const ready = insights?.status === 'ready'
+  const busy = requesting || generating
+  const failed = insights?.status === 'failed' || (insights?.status === 'generating' && !generating)
+
+  const bar = (
+    <div className="insights-bar panel-wide">
+      <div>
+        <strong>Revenue and risk opportunities</strong>
+        <div className="muted small">
+          {busy
+            ? 'Reading the lease and its amendments… this usually takes a minute or two.'
+            : ready && insights?.generated_at
+              ? `Generated ${new Date(insights.generated_at).toLocaleString()}${insights.model ? ` with ${insights.model}` : ''} from the main lease and all its amendments.`
+              : 'AI reviews the main lease and all its amendments for the items below.'}
+        </div>
+        {failed && <div className="error small">Generation failed{insights?.error ? `: ${insights.error}` : ''}. Try again.</div>}
+        {error && <div className="error small">{error}</div>}
+      </div>
+      <button className="btn btn-sm" onClick={generate} disabled={busy || insights === undefined}>
+        {busy ? (
+          <>
+            <span className="spinner" role="status" aria-label="Generating" /> Generating…
+          </>
+        ) : ready ? (
+          'Refresh'
+        ) : (
+          'Generate'
+        )}
+      </button>
+    </div>
+  )
+
+  const panel = (group: InsightGroup, title: string, icon: string, color: 'purple' | 'yellow') => {
+    const items = ready && insights ? groupInsights(insights.items, group) : []
+    const found = items.filter((i) => i.status !== 'none')
+    const absent = items.filter((i) => i.status === 'none')
+    const actions = items.filter((i) => i.status === 'action').length
+    return (
+      <Panel title={title} icon={icon} color={color} wide aside={ready ? `${actions} action${actions === 1 ? '' : 's'}` : undefined}>
+        {!ready ? (
+          <p className="muted panel-empty">{busy ? 'Generating…' : 'Not generated yet. Click Generate above.'}</p>
+        ) : (
+          <>
+            <ul className="insight-list">
+              {found.map((i) => (
+                <li key={i.category} className="insight">
+                  <span className={`badge insight-badge insight-badge-${i.status}`}>{INSIGHT_STATUS_LABELS[i.status]}</span>
+                  <div className="insight-body">
+                    <div className="insight-title">
+                      {i.label}
+                      {i.status === 'action' && i.priority === 'high' && <span className="insight-priority">High priority</span>}
+                    </div>
+                    <div>{i.summary}</div>
+                    {i.detail && <div className="muted small insight-detail">{i.detail}</div>}
+                    {(i.due_date || i.amount || i.citations.length > 0) && (
+                      <div className="insight-meta small">
+                        {i.due_date && <span>Due {i.due_date}</span>}
+                        {i.amount && <span>{i.amount}</span>}
+                        {i.citations.map((c) => (
+                          <Link key={`${c.leaseId}:${c.page}`} to={`/leases/${c.leaseId}`} className="chat-source" title={c.title}>
+                            {c.leaseId === leaseId ? '' : `${c.title}, `}p. {c.page}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {absent.length > 0 && (
+              <p className="muted small insight-absent">Not in lease: {absent.map((i) => i.label).join(', ')}</p>
+            )}
+          </>
+        )}
+      </Panel>
+    )
+  }
+
+  return (
+    <>
+      {bar}
+      {panel('revenue', 'Revenue opportunities', '📈', 'purple')}
+      {panel('risk', 'Risk opportunities', '🛡️', 'yellow')}
+      <Panel title="CAM reconciliation" icon="🧾" color="purple" wide>
+        <CamReconciliation familyId={familyId} terms={insights?.cam ?? null} ready={ready} />
+      </Panel>
+    </>
+  )
+}
+
+/** Claude token usage of the file this document came from, one row per analysis run. */
+function UsagePanel({ fileId }: { fileId: string }) {
+  const [runs, setRuns] = useState<AiUsage[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchFileUsage(fileId).then(setRuns, (e) => setError(e.message))
+  }, [fileId])
+
+  if (error) return <p className="error small">Could not load token usage: {error}</p>
+  if (!runs) return <p className="muted small">Loading…</p>
+  if (!runs.length) {
+    return <p className="muted panel-empty">No usage recorded yet. Usage is saved from the next analysis or re-analysis of this file.</p>
+  }
+
+  const input = runs.reduce((n, u) => n + totalInputTokens(u), 0)
+  const output = runs.reduce((n, u) => n + u.output_tokens, 0)
+  return (
+    <table className="panel-table">
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Model</th>
+          <th className="panel-num">Input</th>
+          <th className="panel-num">Output</th>
+        </tr>
+      </thead>
+      <tbody>
+        {runs.map((u) => (
+          <tr key={u.id}>
+            <td>
+              {PROCESS_LABELS[u.process]}
+              <div className="muted small">{new Date(u.created_at).toLocaleString()}</div>
+            </td>
+            <td className="small">
+              {u.model}
+              {u.served_by && u.served_by !== u.model && <div className="muted small">served by {u.served_by}</div>}
+            </td>
+            <td
+              className="panel-num"
+              title={`${u.input_tokens.toLocaleString()} uncached · ${u.cache_read_input_tokens.toLocaleString()} cache read · ${u.cache_creation_input_tokens.toLocaleString()} cache write`}
+            >
+              {formatTokens(totalInputTokens(u))}
+            </td>
+            <td className="panel-num">{formatTokens(u.output_tokens)}</td>
+          </tr>
+        ))}
+        <tr className="usage-total">
+          <td colSpan={2}>Total ({runs.length} {runs.length === 1 ? 'run' : 'runs'})</td>
+          <td className="panel-num" title={`${input.toLocaleString()} tokens`}>{formatTokens(input)}</td>
+          <td className="panel-num" title={`${output.toLocaleString()} tokens`}>{formatTokens(output)}</td>
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
 export function Details() {
   const { id } = useParams<{ id: string }>()
   const [leases, setLeases] = useState<Lease[]>([])
@@ -72,6 +275,8 @@ export function Details() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [viewing, setViewing] = useState<Lease | null>(null)
+  const [reporting, setReporting] = useState(false)
+  const dialog = useDialog()
 
   useEffect(() => {
     setLoading(true)
@@ -131,6 +336,18 @@ export function Details() {
     return list
   }, [lease, file, familyExpiration, a.renewal_options])
 
+  const downloadReport = async () => {
+    if (!lease) return
+    setReporting(true)
+    try {
+      await downloadLeaseReport({ lease, fileName: file?.file_name ?? null, family, tasks, familyId: main?.id ?? lease.id })
+    } catch (e) {
+      await dialog.alert({ title: 'Could not create the report', message: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setReporting(false)
+    }
+  }
+
   if (loading) {
     return (
       <main className="container wide">
@@ -148,6 +365,8 @@ export function Details() {
     )
   }
 
+  const sections = leaseSections(lease)
+
   return (
     <main className="container wide">
       <div className="dash">
@@ -163,9 +382,12 @@ export function Details() {
               <button
                 className="btn btn-ghost btn-sm"
                 disabled={!lease.storage_path}
-                onClick={() => lease.storage_path && openStoredPdf(lease.storage_path).catch((e) => alert(e.message))}
+                onClick={() => lease.storage_path && openStoredPdf(lease.storage_path).catch((e) => dialog.alert({ title: 'Could not open the PDF', message: e.message }))}
               >
                 PDF
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={downloadReport} disabled={reporting} title="Download this lease abstract as a PDF report">
+                {reporting ? 'Preparing…' : 'Report'}
               </button>
             </div>
           </div>
@@ -180,49 +402,23 @@ export function Details() {
           {error && <p className="error">{error}</p>}
           <div className="dash-grid">
             <Panel title="Property" icon="🏢" color="purple">
-              <Terms
-                rows={[
-                  ['Premises', lease.premises ?? a.premises_address],
-                  ['Rentable area', a.rentable_area],
-                  ['Permitted use', a.permitted_use],
-                  ['Landlord', lease.landlord ?? a.landlord],
-                  ['Tenant', lease.tenant ?? a.tenant],
-                ]}
-              />
+              <Terms rows={sections.property} />
             </Panel>
 
             <Panel title="Rent" icon="💵" color="yellow">
-              <Terms
-                rows={[
-                  ['Base rent', a.base_rent],
-                  ['Escalations', a.rent_escalations],
-                  ['Security deposit', a.security_deposit],
-                  ['Operating expenses', a.operating_expenses],
-                ]}
-              />
+              <Terms rows={sections.rent} />
             </Panel>
 
             <Panel title="Lease dates" icon="💬" color="purple">
               <Terms
-                rows={[
-                  ['Effective', lease.effective_date],
-                  ['Commencement', a.commencement_date],                
-                  ['Expiration', a.expiration_date, expiration ? describeExpiry(expiration) : undefined],
-                  ['Term', a.term],
-                  ['Notification Window Start Date', a.renewal_notification_window_start],
-                  ['Renewal Options Start Date', a.renewal_options_start]
-                ]}
+                rows={sections.dates.map(([label, value]): [string, ReactNode, string?] =>
+                  label === 'Expiration' ? [label, value, expiration ? describeExpiry(expiration) : undefined] : [label, value],
+                )}
               />
             </Panel>
 
             <Panel title="Options" icon="📐" color="yellow">
-              <Terms
-                rows={[
-                  ['Renewal', a.renewal_options],
-                  ['Termination', a.termination_options],
-                  ...(lease.doc_type === 'main_lease' ? [] : ([['Changes made', a.changes_made]] as Array<[string, ReactNode]>)),
-                ]}
-              />
+              <Terms rows={sections.options} />
             </Panel>
 
             <Panel title="Related documents" icon="📄" color="purple">
@@ -271,8 +467,14 @@ export function Details() {
               )}
             </Panel>
 
-            <Panel title="Clauses" icon="📑" color="purple" wide>
+            <Panel title="Clauses" icon="📑" color="yellow" wide>
               <LeaseClauses leaseId={lease.id} />
+            </Panel>
+
+            <InsightPanels familyId={main?.id ?? lease.id} leaseId={lease.id} />
+
+            <Panel title="AI usage" icon="🪙" color="purple" wide aside="Whole file">
+              <UsagePanel fileId={lease.file_id} />
             </Panel>
           </div>
         </div>
