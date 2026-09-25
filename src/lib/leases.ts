@@ -101,6 +101,9 @@ export const ABSTRACT_LABELS: Record<string, string> = {
   expiration_date: 'Expiration',
   term: 'Term',
   base_rent: 'Base rent',
+  renewal_notification_window_start: 'Notification Window Start Date',
+  renewal_options_start: 'Renewal Options Start Date',
+
   rent_escalations: 'Rent escalations',
   security_deposit: 'Security deposit',
   renewal_options: 'Renewal options',

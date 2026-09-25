@@ -206,9 +206,11 @@ export function Details() {
               <Terms
                 rows={[
                   ['Effective', lease.effective_date],
-                  ['Commencement', a.commencement_date],
+                  ['Commencement', a.commencement_date],                
                   ['Expiration', a.expiration_date, expiration ? describeExpiry(expiration) : undefined],
                   ['Term', a.term],
+                  ['Notification Window Start Date', a.renewal_notification_window_start],
+                  ['Renewal Options Start Date', a.renewal_options_start]
                 ]}
               />
             </Panel>

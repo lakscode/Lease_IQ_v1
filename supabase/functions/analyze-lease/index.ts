@@ -32,6 +32,8 @@ const ABSTRACT_FIELDS = [
   'expiration_date',
   'term',
   'base_rent',
+  'renewal_notification_window_start',
+  'renewal_options_start',
   'rent_escalations',
   'security_deposit',
   'renewal_options',
