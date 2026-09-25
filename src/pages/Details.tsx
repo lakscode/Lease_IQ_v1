@@ -16,6 +16,7 @@ import { LeaseClauses } from '../components/LeaseClauses'
 import { TextViewer } from '../components/TextViewer'
 import { CamReconciliation } from '../components/CamReconciliation'
 import { useDialog } from '../components/Dialog'
+import { SystemRecordPanel } from '../components/SystemRecordPanel'
 import { daysFromToday, latestExpiration, parseDate } from '../lib/leaseStatus'
 import { downloadLeaseReport, leaseSections } from '../lib/leaseReport'
 import {
@@ -469,6 +470,10 @@ export function Details() {
 
             <Panel title="Clauses" icon="📑" color="yellow" wide>
               <LeaseClauses leaseId={lease.id} />
+            </Panel>
+
+            <Panel title="System records" icon="🗄️" color="yellow" wide aside="Yardi / MRI / CSV">
+              <SystemRecordPanel family={family} />
             </Panel>
 
             <InsightPanels familyId={main?.id ?? lease.id} leaseId={lease.id} />

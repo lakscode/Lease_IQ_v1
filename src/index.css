@@ -422,3 +422,30 @@ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px 
 @keyframes dialog-fade { from { opacity: 0; } }
 @keyframes dialog-pop { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
 @media (prefers-reduced-motion: reduce) { .dialog-backdrop, .dialog { animation: none; } }
+
+/* ---------- Import ---------- */
+.import-tabs { display: flex; gap: 0.25rem; margin: 1.25rem 0 1rem; border-bottom: 1px solid var(--border); }
+.import-tab {
+  background: none; border: none; border-bottom: 2px solid transparent; padding: 0.6rem 1.1rem; margin-bottom: -1px;
+  font: inherit; font-weight: 600; color: var(--muted); cursor: pointer;
+}
+.import-tab:hover { color: var(--text); }
+.import-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.import-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; align-items: start; }
+.import-heading { margin: 0 0 0.75rem; font-size: 1.05rem; }
+.import-steps { margin: 0 0 1rem; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.9rem; }
+.import-upload { margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border); }
+.import-fields td { vertical-align: top; }
+.import-required { color: var(--error); font-size: 0.75rem; font-weight: 600; }
+.import-preview { margin-top: 1.25rem; }
+.import-preview-head { margin-top: 0; }
+.import-preview-head h2 { margin: 0; font-size: 1.1rem; }
+.import-mapping { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.6rem 0.8rem; margin-bottom: 1.25rem; }
+.import-mapping label { font-size: 0.8rem; gap: 0.25rem; }
+.import-mapping label span { color: var(--muted); font-weight: 500; }
+.import-mapping .select, .import-preview td .select { max-width: 100%; width: 100%; }
+.import-unmatched { color: var(--muted); border-style: dashed; }
+.system-source { margin: 0 0 0.5rem; }
+.system-mismatch-count { color: var(--error); font-weight: 600; }
+.system-mismatch td { background: #fef2f2; }
+.system-ok { color: var(--success); font-weight: 700; }

@@ -12,6 +12,7 @@ import { LeaseAbstraction } from './pages/LeaseAbstraction'
 import { Settings } from './pages/Settings'
 import { Details } from './pages/Details'
 import { Chat } from './pages/Chat'
+import { Import } from './pages/Import'
 
 export default function App() {
   return (
@@ -53,6 +54,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Chat />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/import"
+              element={
+                <ProtectedRoute>
+                  <Import />
                 </ProtectedRoute>
               }
             />
