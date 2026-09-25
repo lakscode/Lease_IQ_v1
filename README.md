@@ -1,4 +1,4 @@
-# LeaseIQ app
+# Supabase App
 
 Vite + React + TypeScript app with Supabase email/password auth and a Lease Abstraction module.
 

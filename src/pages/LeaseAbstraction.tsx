@@ -1,18 +1,23 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   deleteLeaseFile,
+  formatTokens,
+  PROCESS_LABELS,
+  totalInputTokens,
   openStoredPdf,
   retryLeaseFile,
   uploadLeaseFile,
+  type AiUsage,
   type Lease,
   type LeaseFile,
   type Stage,
 } from '../lib/leases'
-import { LeaseDocuments } from '../components/LeaseDocuments'
+import { DocumentCells, fileDocuments } from '../components/LeaseDocuments'
 import { TextViewer } from '../components/TextViewer'
 import { LogViewer } from '../components/LogViewer'
 import { checkSetup, type SetupIssue } from '../lib/health'
+import { useDialog } from '../components/Dialog'
 
 const FINAL_STATUSES = new Set(['completed', 'failed'])
 const REFRESH_MS = 4000
@@ -40,9 +45,9 @@ function describeStage(s: Stage): { text: string; percent?: number } {
 export function LeaseAbstraction() {
   const [files, setFiles] = useState<LeaseFile[]>([])
   const [leases, setLeases] = useState<Lease[]>([])
+  const [usage, setUsage] = useState<AiUsage[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [upload, setUpload] = useState<{ name: string; stage: Stage } | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [busyFiles, setBusyFiles] = useState<Record<string, Stage>>({})
@@ -53,12 +58,17 @@ export function LeaseAbstraction() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [setupIssues, setSetupIssues] = useState<SetupIssue[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+  const dialog = useDialog()
 
   const load = useCallback(async () => {
-    const [filesRes, leasesRes] = await Promise.all([
+    const [filesRes, leasesRes, usageRes] = await Promise.all([
       supabase.from('lease_files').select('*').order('created_at', { ascending: false }),
       supabase.from('leases').select('*'),
+      supabase.from('ai_usage').select('*').not('file_id', 'is', null).order('created_at'),
     ])
+    // Usage is extra detail; the table still loads without it.
+    if (usageRes.error) console.warn('[usage] loading ai_usage failed:', usageRes.error.message)
+    else setUsage(usageRes.data as AiUsage[])
     const err = filesRes.error ?? leasesRes.error
     if (err) setLoadError(err.message)
     else {
@@ -117,7 +127,16 @@ export function LeaseAbstraction() {
   const retry = async (file: LeaseFile, reanalyze = false) => {
     if (
       reanalyze &&
-      !confirm(`Re-analyze "${file.file_name}"? Its documents and clauses will be replaced with the results of a new AI analysis.`)
+      !(await dialog.confirm({
+        title: 'Re-analyze this file?',
+        message: (
+          <>
+            <strong>{file.file_name}</strong> will be analyzed again with AI. Its documents and clauses will be replaced with the
+            new results.
+          </>
+        ),
+        confirmLabel: 'Re-analyze',
+      }))
     ) {
       return
     }
@@ -133,24 +152,28 @@ export function LeaseAbstraction() {
   }
 
   const remove = async (file: LeaseFile) => {
-    if (!confirm(`Delete "${file.file_name}" and all documents extracted from it?`)) return
+    const ok = await dialog.confirm({
+      title: 'Delete this file?',
+      message: (
+        <>
+          <strong>{file.file_name}</strong> and every document extracted from it will be deleted. This can't be undone.
+        </>
+      ),
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await deleteLeaseFile(file)
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      await dialog.alert({ title: 'Could not delete the file', message: e instanceof Error ? e.message : String(e) })
     }
     await load()
   }
 
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
   const filesById = new Map(files.map((f) => [f.id, f]))
+  const usageByFile = new Map<string, AiUsage[]>()
+  for (const u of usage) if (u.file_id) usageByFile.set(u.file_id, [...(usageByFile.get(u.file_id) ?? []), u])
   const logFile = logFileId ? filesById.get(logFileId) : undefined
   const progress = upload ? describeStage(upload.stage) : null
 
@@ -232,95 +255,104 @@ export function LeaseAbstraction() {
         <p className="muted">No files uploaded yet.</p>
       ) : (
         <div className="table-wrap">
-          <table className="table">
+          <table className="table files-table">
             <thead>
               <tr>
-                <th />
                 <th>File</th>
-                <th>Pages</th>
-                <th>Source</th>
-                <th>Documents</th>
-                <th>Main leases</th>
-                <th>Status</th>
-                <th>Uploaded</th>
+                <th>Type</th>
+                <th>Document</th>
+                <th>Effective</th>
+                <th>Tenant</th>
+                <th>Premises</th>
+                <th />
                 <th />
               </tr>
             </thead>
-            <tbody>
-              {files.map((file) => {
-                const docs = leases.filter((l) => l.file_id === file.id)
-                const busy = busyFiles[file.id]
-                const isUploading = upload !== null && !FINAL_STATUSES.has(file.status)
-                const stalled = !FINAL_STATUSES.has(file.status) && !busy && !isUploading
-                const isOpen = expanded.has(file.id)
-                return (
-                  <Fragment key={file.id}>
-                    <tr className="file-row" onClick={() => toggle(file.id)}>
-                      <td className="chevron">{isOpen ? '▾' : '▸'}</td>
-                      <td className="doc-title">{file.file_name}</td>
-                      <td>{file.page_count}</td>
-                      <td>
-                        {file.is_scanned ? (
-                          <span className="badge badge-ocr" title={`${file.ocr_pages} page(s) converted with OCR`}>
-                            Scanned (OCR {file.ocr_pages}p)
-                          </span>
-                        ) : (
-                          <span className="badge">Digital</span>
-                        )}
-                      </td>
-                      <td>{docs.length}</td>
-                      <td>{docs.filter((d) => d.doc_type === 'main_lease').length}</td>
-                      <td>
-                        <StatusBadge file={file} busy={busy} />
-                        {busy && <div className="muted small stage-detail">{describeStage(busy).text}</div>}
-                        {!busy && file.status === 'failed' && file.error && <div className="error small">{file.error}</div>}
-                      </td>
-                      <td className="nowrap">{new Date(file.created_at).toLocaleString()}</td>
-                      <td className="actions" onClick={(e) => e.stopPropagation()}>
-                        {busy ? (
-                          <button className="btn btn-ghost btn-sm" disabled>
-                            <Spinner /> {BUSY_LABELS[busy.stage]}…
-                          </button>
-                        ) : file.status === 'failed' || stalled ? (
-                          <button className="btn btn-ghost btn-sm" onClick={() => retry(file)}>Retry</button>
-                        ) : (
-                          file.status === 'completed' && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => retry(file, true)}
-                              title="Run the AI analysis again and replace this file's documents and clauses"
-                            >
-                              Re-analyze
-                            </button>
-                          )
-                        )}
-                        <button className="btn btn-ghost btn-sm" onClick={() => setLogFileId(file.id)}>Log</button>
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => openStoredPdf(file.storage_path).catch((e) => alert(e.message))}
-                        >
-                          PDF
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-sm danger"
-                          onClick={() => remove(file)}
-                          disabled={!!busy || isUploading}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                    {isOpen && (
-                      <tr className="expanded-row">
-                        <td colSpan={9}>
-                          <LeaseDocuments file={file} allLeases={leases} filesById={filesById} onViewText={setViewing} />
-                        </td>
-                      </tr>
+            {files.map((file, i) => {
+              const docs = fileDocuments(file, leases)
+              const busy = busyFiles[file.id]
+              const isUploading = upload !== null && !FINAL_STATUSES.has(file.status)
+              const stalled = !FINAL_STATUSES.has(file.status) && !busy && !isUploading
+              const span = Math.max(docs.length, 1)
+
+              const fileCell = (
+                <td rowSpan={span} className="file-cell">
+                  <button
+                    className="file-name"
+                    onClick={() => openStoredPdf(file.storage_path).catch((e) => dialog.alert({ title: 'Could not open the PDF', message: e.message }))}
+                    title="Open the original PDF"
+                  >
+                    {file.file_name}
+                  </button>
+                  <div className="file-badges">
+                    <StatusBadge file={file} busy={busy} />
+                    {file.is_scanned ? (
+                      <span className="badge badge-ocr" title={`${file.ocr_pages} page(s) converted with OCR`}>
+                        Scanned (OCR {file.ocr_pages}p)
+                      </span>
+                    ) : (
+                      <span className="badge">Digital</span>
                     )}
-                  </Fragment>
-                )
-              })}
-            </tbody>
+                  </div>
+                  <div className="muted small">
+                    {file.page_count} {file.page_count === 1 ? 'page' : 'pages'} · {new Date(file.created_at).toLocaleString()}
+                  </div>
+                  <UsageSummary runs={usageByFile.get(file.id) ?? []} />
+                  {busy && <div className="muted small stage-detail">{describeStage(busy).text}</div>}
+                  {!busy && file.status === 'failed' && file.error && <div className="error small">{file.error}</div>}
+                </td>
+              )
+
+              const fileActions = (
+                <td rowSpan={span} className="actions file-actions">
+                  {busy ? (
+                    <button className="btn btn-ghost btn-sm" disabled>
+                      <Spinner /> {BUSY_LABELS[busy.stage]}…
+                    </button>
+                  ) : file.status === 'failed' || stalled ? (
+                    <button className="btn btn-ghost btn-sm" onClick={() => retry(file)}>Retry</button>
+                  ) : (
+                    file.status === 'completed' && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => retry(file, true)}
+                        title="Run the AI analysis again and replace this file's documents and clauses"
+                      >
+                        Re-analyze
+                      </button>
+                    )
+                  )}
+                  <button className="btn btn-ghost btn-sm" onClick={() => setLogFileId(file.id)}>Log</button>
+                  <button className="btn btn-ghost btn-sm danger" onClick={() => remove(file)} disabled={!!busy || isUploading}>
+                    Delete
+                  </button>
+                </td>
+              )
+
+              return (
+                <tbody key={file.id} className={`file-group${i % 2 ? ' file-group-alt' : ''}`}>
+                  {docs.length === 0 ? (
+                    <tr>
+                      {fileCell}
+                      <td colSpan={6} className="muted doc-empty-cell">
+                        {FINAL_STATUSES.has(file.status) && !busy
+                          ? 'No lease documents were found in this file.'
+                          : 'Documents appear here once processing finishes.'}
+                      </td>
+                      {fileActions}
+                    </tr>
+                  ) : (
+                    docs.map((entry, j) => (
+                      <tr key={entry.lease.id}>
+                        {j === 0 && fileCell}
+                        <DocumentCells entry={entry} onViewText={setViewing} />
+                        {j === 0 && fileActions}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              )
+            })}
           </table>
         </div>
       )}
@@ -334,6 +366,28 @@ export function LeaseAbstraction() {
         />
       )}
     </main>
+  )
+}
+
+/** Token totals for a file, with each Claude request listed in the tooltip. */
+function UsageSummary({ runs }: { runs: AiUsage[] }) {
+  if (!runs.length) return null
+  const input = runs.reduce((n, u) => n + totalInputTokens(u), 0)
+  const output = runs.reduce((n, u) => n + u.output_tokens, 0)
+  const detail = runs
+    .map((u) => {
+      const cache = u.cache_read_input_tokens || u.cache_creation_input_tokens
+        ? ` (cache: ${formatTokens(u.cache_read_input_tokens)} read, ${formatTokens(u.cache_creation_input_tokens)} written)`
+        : ''
+      const served = u.served_by && u.served_by !== u.model ? `, served by ${u.served_by}` : ''
+      return `${new Date(u.created_at).toLocaleString()} · ${PROCESS_LABELS[u.process]} · ${u.model}${served}\n  ${totalInputTokens(u).toLocaleString()} input${cache}, ${u.output_tokens.toLocaleString()} output`
+    })
+    .join('\n')
+  return (
+    <div className="muted small usage-summary" title={detail}>
+      Tokens: {formatTokens(input)} in · {formatTokens(output)} out
+      {runs.length > 1 && ` · ${runs.length} runs`}
+    </div>
   )
 }
 

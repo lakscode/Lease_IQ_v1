@@ -45,7 +45,7 @@ const ABSTRACT_FIELDS = [
 
 // Bump when changing this function, together with EXPECTED_FUNCTION_VERSION in
 // src/lib/health.ts; returned in the x-function-version header.
-const FUNCTION_VERSION = '12'
+const FUNCTION_VERSION = '11'
 
 const OUTPUT_SCHEMA = {
   type: 'object',

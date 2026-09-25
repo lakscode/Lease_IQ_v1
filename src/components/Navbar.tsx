@@ -3,7 +3,7 @@ import { useAuth } from '../lib/AuthProvider'
 import { supabase } from '../lib/supabase'
 
 export function Navbar() {
-  const { session } = useAuth()
+  const { session, isSuperAdmin } = useAuth()
   const navigate = useNavigate()
 
   const signOut = async () => {
@@ -19,7 +19,14 @@ export function Navbar() {
           <>
             <Link to="/dashboard">Dashboard</Link>
             <Link to="/leases">Lease Abstraction</Link>
-            <Link to="/settings">Settings</Link>
+            <Link to="/chat">Lease Assistant</Link>
+            <Link to="/import">Import</Link>
+            {isSuperAdmin && (
+              <>
+                <Link to="/settings">Settings</Link>
+                <span className="badge nav-role" title="You are signed in as a super admin">Super admin</span>
+              </>
+            )}
             <button className="btn btn-ghost" onClick={signOut}>Sign out</button>
           </>
         ) : (

@@ -1,88 +1,41 @@
-import { Fragment, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DOC_TYPE_LABELS, openStoredPdf, type Lease, type LeaseFile } from '../lib/leases'
 
-type Props = {
-  file: LeaseFile
-  allLeases: Lease[]
-  filesById: Map<string, LeaseFile>
-  onViewText: (lease: Lease) => void
-}
+export type DocEntry = { lease: Lease; child: boolean; note?: string }
 
 const byPage = (a: Lease, b: Lease) => a.page_start - b.page_start
 
-/** The documents found in one uploaded file, with children nested under their main lease. */
-export function LeaseDocuments({ file, allLeases, filesById, onViewText }: Props) {
+/**
+ * The documents found in one uploaded file, in display order: each main lease
+ * followed by its amendments/addenda from the same file, then the rest.
+ */
+export function fileDocuments(file: LeaseFile, allLeases: Lease[]): DocEntry[] {
   const inFile = allLeases.filter((l) => l.file_id === file.id).sort(byPage)
   const leasesById = new Map(allLeases.map((l) => [l.id, l]))
   const mains = inFile.filter((l) => l.doc_type === 'main_lease')
   const mainIds = new Set(mains.map((m) => m.id))
-  const unattached = inFile.filter((l) => l.doc_type !== 'main_lease' && !(l.parent_id && mainIds.has(l.parent_id)))
 
-  if (!inFile.length) {
-    return <p className="muted doc-empty">No documents yet. They appear here once processing finishes.</p>
+  const entries: DocEntry[] = []
+  for (const main of mains) {
+    entries.push({ lease: main, child: false })
+    inFile
+      .filter((l) => l.parent_id === main.id)
+      .sort((a, b) => (a.effective_date ?? '').localeCompare(b.effective_date ?? '') || byPage(a, b))
+      .forEach((child) => entries.push({ lease: child, child: true }))
   }
-
-  return (
-    <table className="table doc-table">
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th>Document</th>
-          <th>Pages</th>
-          <th>Effective</th>
-          <th>Tenant</th>
-          <th>Premises</th>
-          <th />
-        </tr>
-      </thead>
-      <tbody>
-        {mains.map((main) => {
-          const children = allLeases
-            .filter((l) => l.parent_id === main.id)
-            .sort((a, b) => (a.effective_date ?? '').localeCompare(b.effective_date ?? '') || byPage(a, b))
-          return (
-            <Fragment key={main.id}>
-              <LeaseRow lease={main} onViewText={onViewText} />
-              {children.map((child) => (
-                <LeaseRow
-                  key={child.id}
-                  lease={child}
-                  child
-                  note={child.file_id !== file.id ? `from ${filesById.get(child.file_id)?.file_name ?? 'another file'}` : undefined}
-                  onViewText={onViewText}
-                />
-              ))}
-            </Fragment>
-          )
-        })}
-        {unattached.map((doc) => {
-          const parent = doc.parent_id ? leasesById.get(doc.parent_id) : undefined
-          return (
-            <LeaseRow
-              key={doc.id}
-              lease={doc}
-              note={parent ? `belongs to ${parent.title}` : doc.doc_type === 'other' ? undefined : 'main lease not found'}
-              onViewText={onViewText}
-            />
-          )
-        })}
-      </tbody>
-    </table>
-  )
+  for (const doc of inFile) {
+    if (doc.doc_type === 'main_lease' || (doc.parent_id && mainIds.has(doc.parent_id))) continue
+    const parent = doc.parent_id ? leasesById.get(doc.parent_id) : undefined
+    const note = parent ? `belongs to ${parent.title}` : doc.doc_type === 'other' ? undefined : 'main lease not found'
+    entries.push({ lease: doc, child: false, note })
+  }
+  return entries
 }
 
-function LeaseRow({
-  lease,
-  child,
-  note,
-  onViewText,
-}: {
-  lease: Lease
-  child?: boolean
-  note?: string
-  onViewText: (lease: Lease) => void
-}) {
+/** The per-document cells of one row in the uploaded files table. */
+export function DocumentCells({ entry, onViewText }: { entry: DocEntry; onViewText: (lease: Lease) => void }) {
+  const { lease, child, note } = entry
   const [error, setError] = useState<string | null>(null)
 
   const openPdf = () => {
@@ -93,28 +46,25 @@ function LeaseRow({
 
   return (
     <>
-      <tr className={child ? 'child-row' : undefined}>
-        <td>
-          {child && <span className="tree-branch">↳</span>}
-          <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>
-        </td>
-        <td>
-          <div className="doc-title">{lease.title}</div>
-          {note && <div className="muted small">{note}</div>}
-          {error && <div className="error small">{error}</div>}
-        </td>
-        <td className="nowrap">
+      <td className={child ? 'child-cell' : undefined}>
+        {child && <span className="tree-branch">↳</span>}
+        <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>
+      </td>
+      <td>
+        <Link to={`/leases/${lease.id}`} className="doc-title doc-link" title="Open details">{lease.title}</Link>
+        <div className="muted small">
           {lease.page_start === lease.page_end ? `p. ${lease.page_start}` : `p. ${lease.page_start}–${lease.page_end}`}
-        </td>
-        <td className="nowrap">{lease.effective_date ?? '—'}</td>
-        <td>{lease.tenant ?? '—'}</td>
-        <td>{lease.premises ?? '—'}</td>
-        <td className="actions">
-          <Link to={`/leases/${lease.id}`} className="btn btn-ghost btn-sm">Details</Link>
-          <button className="btn btn-ghost btn-sm" onClick={() => onViewText(lease)}>Text</button>
-          <button className="btn btn-ghost btn-sm" onClick={openPdf} disabled={!lease.storage_path}>PDF</button>
-        </td>
-      </tr>
+          {note && <> · {note}</>}
+        </div>
+        {error && <div className="error small">{error}</div>}
+      </td>
+      <td className="nowrap">{lease.effective_date ?? '—'}</td>
+      <td>{lease.tenant ?? '—'}</td>
+      <td className="premises-cell">{lease.premises ?? '—'}</td>
+      <td className="actions">
+        <button className="btn btn-ghost btn-sm" onClick={() => onViewText(lease)}>Text</button>
+        <button className="btn btn-ghost btn-sm" onClick={openPdf} disabled={!lease.storage_path}>PDF</button>
+      </td>
     </>
   )
 }
