@@ -468,3 +468,9 @@ export async function fetchFileLogs(fileId: string) {
   if (error) throw new Error(error.message)
   return data as LeaseFileLog[]
 }
+
+export function formatTokens(n: number) {
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
+  return `${(n / 1_000_000).toFixed(2)}M`
+}
