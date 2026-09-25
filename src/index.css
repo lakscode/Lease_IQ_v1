@@ -357,3 +357,4 @@ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px 
   .chat-history { max-height: 14rem; min-height: 0; }
   .chat-history-delete { opacity: 1; }
 }
+.nav-role { background: rgba(255, 255, 255, 0.15); color: #fff; }

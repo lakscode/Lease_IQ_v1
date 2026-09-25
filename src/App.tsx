@@ -57,7 +57,7 @@ export default function App() {
           <Route
             path="/settings"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute superAdmin>
                 <Settings />
               </ProtectedRoute>
             }
