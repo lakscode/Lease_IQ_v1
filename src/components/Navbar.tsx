@@ -13,7 +13,7 @@ export function Navbar() {
 
   return (
     <nav className="nav">
-      <Link to="/" className="brand">⚡ LeaseIQ</Link>
+      <Link to="/" className="brand"><img src="/logo.png" alt="LeaseIQ" /></Link>
       <div className="nav-links">
         {session ? (
           <>
