@@ -43,6 +43,140 @@ export type Lease = {
   summary: string | null
   abstract: Record<string, string | null>
   created_at: string
+  edited_at: string | null
+}
+
+/** Lease columns that can be edited by hand; abstract fields are edited as "abstract.<key>". */
+export type LeaseColumn = 'title' | 'effective_date' | 'landlord' | 'tenant' | 'premises' | 'summary'
+
+export type EditableField = {
+  // Column name, or "abstract.<key>".
+  key: LeaseColumn | `abstract.${string}`
+  label: string
+  kind?: 'date' | 'long'
+}
+
+export const EDITABLE_SECTIONS: Array<{ title: string; fields: EditableField[] }> = [
+  {
+    title: 'Document',
+    fields: [
+      { key: 'title', label: 'Title' },
+      { key: 'summary', label: 'Summary', kind: 'long' },
+    ],
+  },
+  {
+    title: 'Property',
+    fields: [
+      { key: 'premises', label: 'Premises' },
+      { key: 'abstract.rentable_area', label: 'Rentable area' },
+      { key: 'abstract.permitted_use', label: 'Permitted use', kind: 'long' },
+      { key: 'landlord', label: 'Landlord' },
+      { key: 'tenant', label: 'Tenant' },
+    ],
+  },
+  {
+    title: 'Rent',
+    fields: [
+      { key: 'abstract.base_rent', label: 'Base rent', kind: 'long' },
+      { key: 'abstract.rent_escalations', label: 'Escalations', kind: 'long' },
+      { key: 'abstract.security_deposit', label: 'Security deposit' },
+      { key: 'abstract.operating_expenses', label: 'Operating expenses', kind: 'long' },
+    ],
+  },
+  {
+    title: 'Lease dates',
+    fields: [
+      { key: 'effective_date', label: 'Effective', kind: 'date' },
+      { key: 'abstract.commencement_date', label: 'Commencement' },
+      { key: 'abstract.expiration_date', label: 'Expiration' },
+      { key: 'abstract.term', label: 'Term' },
+      { key: 'abstract.renewal_notification_window_start', label: 'Notification Window Start Date' },
+      { key: 'abstract.renewal_options_start', label: 'Renewal Options Start Date' },
+    ],
+  },
+  {
+    title: 'Options',
+    fields: [
+      { key: 'abstract.renewal_options', label: 'Renewal', kind: 'long' },
+      { key: 'abstract.termination_options', label: 'Termination', kind: 'long' },
+      { key: 'abstract.changes_made', label: 'Changes made', kind: 'long' },
+    ],
+  },
+]
+
+const FIELD_LABELS: Record<string, string> = {
+  doc_type: 'Document type',
+  ...Object.fromEntries(EDITABLE_SECTIONS.flatMap((s) => s.fields.map((f) => [f.key, f.label]))),
+}
+
+export const fieldLabel = (field: string) =>
+  FIELD_LABELS[field] ?? (field.startsWith('abstract.') ? ABSTRACT_LABELS[field.slice(9)] ?? field.slice(9) : field)
+
+/** Current value of an editable field. Landlord, tenant and premises fall back to the abstract, as displayed. */
+export function fieldValue(lease: Lease, key: EditableField['key']): string {
+  const a = lease.abstract ?? {}
+  if (key.startsWith('abstract.')) return a[key.slice(9)] ?? ''
+  const col = key as LeaseColumn
+  if (col === 'premises') return lease.premises ?? a.premises_address ?? ''
+  if (col === 'landlord' || col === 'tenant') return lease[col] ?? a[col] ?? ''
+  return lease[col] ?? ''
+}
+
+/**
+ * Saves the changed fields of a lease. Each change is recorded in lease_edits by a
+ * database trigger, with the previous value and who made it.
+ */
+export async function updateLeaseDetails(lease: Lease, changes: Partial<Record<EditableField['key'], string>>): Promise<Lease> {
+  const patch: Record<string, unknown> = {}
+  const abstract = { ...(lease.abstract ?? {}) }
+  let abstractChanged = false
+  for (const [key, raw] of Object.entries(changes)) {
+    const value = raw?.trim() || null
+    if (key.startsWith('abstract.')) {
+      abstract[key.slice(9)] = value
+      abstractChanged = true
+    } else if (key === 'title') {
+      if (!value) throw new Error('Title cannot be empty.')
+      patch.title = value
+    } else {
+      patch[key] = value
+      // Cleared: also clear the abstract value the display would otherwise fall back to.
+      const mirror = key === 'premises' ? 'premises_address' : key === 'landlord' || key === 'tenant' ? key : null
+      if (!value && mirror && abstract[mirror]) {
+        abstract[mirror] = null
+        abstractChanged = true
+      }
+    }
+  }
+  if (abstractChanged) patch.abstract = abstract
+  if (!Object.keys(patch).length) return lease
+  patch.edited_at = new Date().toISOString()
+
+  const { data, error } = await supabase.from('leases').update(patch).eq('id', lease.id).select('*').single()
+  if (error) throw new Error(error.message)
+  return data as Lease
+}
+
+export type LeaseEdit = {
+  id: number
+  lease_id: string
+  edited_by: string | null
+  edited_by_email: string | null
+  field: string
+  old_value: string | null
+  new_value: string | null
+  created_at: string
+}
+
+export async function fetchLeaseEdits(leaseId: string): Promise<LeaseEdit[]> {
+  const { data, error } = await supabase
+    .from('lease_edits')
+    .select('*')
+    .eq('lease_id', leaseId)
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+  if (error) throw new Error(error.message)
+  return data as LeaseEdit[]
 }
 
 export type ClausePrediction = { labelId: string; label: string; score: number }

@@ -14,6 +14,8 @@ import {
 } from '../lib/leases'
 import { LeaseClauses } from '../components/LeaseClauses'
 import { TextViewer } from '../components/TextViewer'
+import { LeaseEditor } from '../components/LeaseEditor'
+import { LeaseHistory } from '../components/LeaseHistory'
 import { CamReconciliation } from '../components/CamReconciliation'
 import { useDialog } from '../components/Dialog'
 import { SystemRecordPanel } from '../components/SystemRecordPanel'
@@ -277,6 +279,7 @@ export function Details() {
   const [error, setError] = useState<string | null>(null)
   const [viewing, setViewing] = useState<Lease | null>(null)
   const [reporting, setReporting] = useState(false)
+  const [editing, setEditing] = useState(false)
   const dialog = useDialog()
 
   useEffect(() => {
@@ -379,6 +382,7 @@ export function Details() {
             </div>
             <div className="dash-actions">
               <Link to={`/chat?lease=${lease.id}`} className="btn btn-sm">Ask about this lease</Link>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Correct the extracted details">Edit</button>
               <button className="btn btn-ghost btn-sm" onClick={() => setViewing(lease)}>Text</button>
               <button
                 className="btn btn-ghost btn-sm"
@@ -396,6 +400,7 @@ export function Details() {
             <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>{' '}
             {pages(lease)} of {file?.file_name ?? 'unknown file'}
             {lease.summary && <> · {lease.summary}</>}
+            {lease.edited_at && <span className="muted small"> · Edited {new Date(lease.edited_at).toLocaleString()}</span>}
           </p>
         </div>
 
@@ -478,6 +483,10 @@ export function Details() {
 
             <InsightPanels familyId={main?.id ?? lease.id} leaseId={lease.id} />
 
+            <Panel title="Edit history" icon="🕘" color="yellow" wide>
+              <LeaseHistory leaseId={lease.id} version={lease.edited_at} />
+            </Panel>
+
             <Panel title="AI usage" icon="🪙" color="purple" wide aside="Whole file">
               <UsagePanel fileId={lease.file_id} />
             </Panel>
@@ -486,6 +495,16 @@ export function Details() {
       </div>
 
       {viewing && <TextViewer lease={viewing} onClose={() => setViewing(null)} />}
+      {editing && (
+        <LeaseEditor
+          lease={lease}
+          onClose={() => setEditing(false)}
+          onSaved={(updated) => {
+            setLeases((ls) => ls.map((l) => (l.id === updated.id ? updated : l)))
+            setEditing(false)
+          }}
+        />
+      )}
     </main>
   )
 }
