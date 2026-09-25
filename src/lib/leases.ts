@@ -101,9 +101,6 @@ export const ABSTRACT_LABELS: Record<string, string> = {
   expiration_date: 'Expiration',
   term: 'Term',
   base_rent: 'Base rent',
-  renewal_notification_window_start: 'Notification Window Start Date',
-  renewal_options_start: 'Renewal Options Start Date',
-
   rent_escalations: 'Rent escalations',
   security_deposit: 'Security deposit',
   renewal_options: 'Renewal options',
@@ -470,41 +467,4 @@ export async function fetchFileLogs(fileId: string) {
     .order('id')
   if (error) throw new Error(error.message)
   return data as LeaseFileLog[]
-}
-
-export type AiUsage = {
-  id: number
-  file_id: string | null
-  process: 'analysis' | 'reanalysis' | 'chat' | 'insights'
-  chat_id: string | null
-  model: string
-  served_by: string | null
-  input_tokens: number
-  output_tokens: number
-  cache_creation_input_tokens: number
-  cache_read_input_tokens: number
-  duration_ms: number | null
-  created_at: string
-}
-
-/** Every input token of a request, including those written to or read from the prompt cache. */
-export const totalInputTokens = (u: AiUsage) => u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
-
-export const PROCESS_LABELS: Record<AiUsage['process'], string> = {
-  analysis: 'Analysis',
-  reanalysis: 'Re-analysis',
-  chat: 'Chat question',
-  insights: 'Opportunities',
-}
-
-export function formatTokens(n: number) {
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
-  return `${(n / 1_000_000).toFixed(2)}M`
-}
-
-export async function fetchFileUsage(fileId: string): Promise<AiUsage[]> {
-  const { data, error } = await supabase.from('ai_usage').select('*').eq('file_id', fileId).order('created_at')
-  if (error) throw new Error(error.message)
-  return data as AiUsage[]
 }
