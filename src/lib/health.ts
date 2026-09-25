@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 
 // Must match FUNCTION_VERSION in supabase/functions/analyze-lease/index.ts.
-export const EXPECTED_FUNCTION_VERSION = '8'
+export const EXPECTED_FUNCTION_VERSION = '12'
 
 export type SetupIssue = { key: string; message: string }
 
