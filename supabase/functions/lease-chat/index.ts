@@ -16,11 +16,12 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 import { config } from '../analyze-lease/config.ts'
 import { fallbackParams, resolveModel } from '../_shared/model.ts'
 import { compactText } from '../_shared/text.ts'
+import { semanticSearch, vectorsEnabled } from '../_shared/vectors.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '5'
+const FUNCTION_VERSION = '6'
 const MAX_TOOL_ROUNDS = 8
 const MAX_HISTORY = 20
 const MAX_MESSAGE_CHARS = 8000
@@ -63,7 +64,7 @@ const TOOLS = [
   {
     name: 'search_lease_text',
     description:
-      'Full-text search over every page of the user\'s lease documents. Returns up to 8 ranked pages with the lease document, page number and matching excerpts.',
+      'Searches every page of the user\'s lease documents by keywords and, when available, by meaning (semantic search), so a question in plain words also finds clauses that use different terms. Returns up to 8 ranked pages with the lease document, page number and matching excerpts.',
     strict: true,
     input_schema: {
       type: 'object',
@@ -156,7 +157,7 @@ Deno.serve(async (req) => {
   const focus = focusId ? catalogue.get(focusId) : undefined
 
   try {
-    const result = await answer(supabase, catalogue, history, focus, chat, language)
+    const result = await answer(supabase, userData.user.id, catalogue, history, focus, chat, language)
     return json(result)
   } catch (err) {
     console.error(JSON.stringify({ v: FUNCTION_VERSION, step: 'failed', error: err instanceof Error ? err.message : String(err) }))
@@ -196,6 +197,7 @@ function catalogueText(catalogue: Map<string, CatalogueLease>) {
 
 async function answer(
   supabase: SupabaseClient,
+  userId: string,
   catalogue: Map<string, CatalogueLease>,
   history: ChatTurn[],
   focus: CatalogueLease | undefined,
@@ -206,7 +208,7 @@ async function answer(
   const model = await resolveModel(supabase)
   const usage = new UsageTally(model)
   try {
-    const result = await runAnswerLoop(client, model, supabase, catalogue, history, focus, usage, language)
+    const result = await runAnswerLoop(client, model, supabase, userId, catalogue, history, focus, usage, language)
     return { ...result, usage: usage.summary() }
   } finally {
     // Tokens are spent even when the loop fails part-way, so always record them.
@@ -269,6 +271,7 @@ async function runAnswerLoop(
   client: Anthropic,
   model: string,
   supabase: SupabaseClient,
+  userId: string,
   catalogue: Map<string, CatalogueLease>,
   history: ChatTurn[],
   focus: CatalogueLease | undefined,
@@ -323,7 +326,7 @@ async function runAnswerLoop(
 
     messages.push({ role: 'assistant', content: message.content })
     const toolUses = message.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use')
-    const results = await Promise.all(toolUses.map((use) => runTool(supabase, catalogue, use, addSource)))
+    const results = await Promise.all(toolUses.map((use) => runTool(supabase, userId, catalogue, use, addSource)))
     messages.push({ role: 'user', content: results })
   }
 
@@ -352,6 +355,7 @@ function rankSources(sources: Map<string, Source & { read: boolean }>): Source[]
 
 async function runTool(
   supabase: SupabaseClient,
+  userId: string,
   catalogue: Map<string, CatalogueLease>,
   use: Anthropic.Beta.BetaToolUseBlock,
   addSource: (lease: CatalogueLease, page: number, read: boolean) => void,
@@ -370,15 +374,41 @@ async function runTool(
     const leaseId = typeof input.lease_id === 'string' ? input.lease_id : null
     if (leaseId && !catalogue.has(leaseId)) return result(`Unknown lease_id ${leaseId}`, true)
 
-    const { data, error } = await supabase.rpc('search_lease_pages', { search_query: input.query, lease_filter: leaseId, match_count: 8 })
-    if (error) return result(`Search failed: ${error.message}`, true)
-    if (!data?.length) return result('No matching pages. Try other words or synonyms.')
+    // Keyword (Postgres full-text) and semantic (Voyage AI + MongoDB Atlas) search run side by side.
+    const [keyword, semantic] = await Promise.all([
+      supabase.rpc('search_lease_pages', { search_query: input.query, lease_filter: leaseId, match_count: 8 }),
+      vectorsEnabled()
+        ? semanticSearch(userId, input.query, leaseId).catch((err) => {
+            console.warn(JSON.stringify({ v: FUNCTION_VERSION, step: 'semantic-search', error: String(err) }))
+            return []
+          })
+        : Promise.resolve([]),
+    ])
+    if (keyword.error && !semantic.length) return result(`Search failed: ${keyword.error.message}`, true)
 
-    // deno-lint-ignore no-explicit-any
-    const hits = (data as any[]).map((row) => {
-      const lease = catalogue.get(row.lease_id)
-      if (lease) addSource(lease, row.page_number, false)
-      return `<hit lease_id="${row.lease_id}" document="${row.lease_title}" type="${row.doc_type}" page="${row.page_number}">\n${compactText(row.excerpt ?? '')}\n</hit>`
+    // Best semantic match first, then alternate between the two lists; one hit per page.
+    type Hit = { leaseId: string; page: number; excerpt: string }
+    const lists: Hit[][] = [
+      semantic.map((h) => ({ leaseId: h.lease_id, page: h.page_number, excerpt: h.text.slice(0, 900) })),
+      // deno-lint-ignore no-explicit-any
+      ((keyword.data ?? []) as any[]).map((row) => ({ leaseId: row.lease_id, page: row.page_number, excerpt: row.excerpt ?? '' })),
+    ]
+    const merged: Hit[] = []
+    const seen = new Set<string>()
+    for (let i = 0; merged.length < 8 && i < Math.max(lists[0].length, lists[1].length); i++) {
+      for (const list of lists) {
+        const hit = list[i]
+        if (!hit || seen.has(`${hit.leaseId}:${hit.page}`) || !catalogue.has(hit.leaseId) || merged.length >= 8) continue
+        seen.add(`${hit.leaseId}:${hit.page}`)
+        merged.push(hit)
+      }
+    }
+    if (!merged.length) return result('No matching pages. Try other words or synonyms.')
+
+    const hits = merged.map((hit) => {
+      const lease = catalogue.get(hit.leaseId)!
+      addSource(lease, hit.page, false)
+      return `<hit lease_id="${lease.id}" document="${lease.title}" type="${lease.doc_type}" page="${hit.page}">\n${compactText(hit.excerpt)}\n</hit>`
     })
     return result(hits.join('\n'))
   }

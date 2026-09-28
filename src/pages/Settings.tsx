@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { CLAUDE_MODELS, fetchClaudeModel, saveClaudeModel } from '../lib/settings'
+import { buildSearchIndex } from '../lib/leases'
 import { useDialog } from '../components/Dialog'
 import { useT } from '../i18n'
 import { settingsPage } from '../i18n/messages/settingsPage'
@@ -120,6 +121,8 @@ export function Settings() {
 
       <ModelSettings />
 
+      <SearchIndexSettings />
+
       <section className="card settings-section">
         <h2>{t('database')}</h2>
         <div className="settings-row">
@@ -135,5 +138,44 @@ export function Settings() {
         {error && <p className="error">{error}</p>}
       </section>
     </main>
+  )
+}
+
+/** Backfills the semantic search index (Voyage AI + MongoDB Atlas) for the signed-in user's files. */
+function SearchIndexSettings() {
+  const { t } = useT(settingsPage)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const build = async () => {
+    setBusy(true)
+    setMessage(null)
+    setError(null)
+    try {
+      const result = await buildSearchIndex()
+      if (!result.enabled) setError(t('searchNotConfigured'))
+      else setMessage(t('indexBuilt', { files: result.files, chunks: result.chunks }))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+    setBusy(false)
+  }
+
+  return (
+    <section className="card settings-section">
+      <h2>{t('searchSection')}</h2>
+      <div className="settings-row">
+        <div>
+          <div className="doc-title">{t('searchIndexTitle')}</div>
+          <p className="muted">{t('searchIndexText')}</p>
+        </div>
+        <button className="btn nowrap" onClick={build} disabled={busy}>
+          {busy ? t('indexing') : t('buildIndex')}
+        </button>
+      </div>
+      {message && <p className="success">{message}</p>}
+      {error && <p className="error">{error}</p>}
+    </section>
   )
 }

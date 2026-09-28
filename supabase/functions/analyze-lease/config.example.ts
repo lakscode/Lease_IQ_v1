@@ -6,4 +6,10 @@ export const config = {
   anthropicModel: 'claude-opus-5',
   // Without the /v1 suffix; the SDK adds it.
   anthropicBaseUrl: 'https://api.anthropic.com',
+  // Optional semantic search for the Lease Assistant (index-lease and lease-chat).
+  // Leave the placeholders to use keyword search only.
+  voyageApiKey: 'pa-...',
+  voyageModel: 'voyage-law-2',
+  mongodbUri: 'mongodb+srv://...',
+  mongodbDb: 'leaseiq',
 }

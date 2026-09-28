@@ -566,10 +566,39 @@ async function splitAndStore(
     .eq('id', fileId)
   if (doneErr) throw new Error(doneErr.message)
   log.info('status', 'File status set to completed')
+
+  await indexForSearch(fileId, log)
+}
+
+/**
+ * Adds the file's pages to the semantic search index (index-lease Edge Function).
+ * Optional: a failure is logged but never fails the upload; the Lease Assistant
+ * then still finds the file through keyword search.
+ */
+async function indexForSearch(fileId: string, log: FileLogger) {
+  const started = performance.now()
+  const { data, error } = await supabase.functions.invoke('index-lease', { body: { fileId } })
+  if (error) log.warn('search-index', `Semantic search indexing failed: ${error.message}`)
+  else if (data?.enabled === false) log.info('search-index', 'Semantic search is not configured; skipped')
+  else log.info('search-index', `Indexed ${data?.chunks ?? 0} chunk(s) for semantic search`, { ...data, ms: elapsed(started) })
+}
+
+/** Indexes every completed file of the signed-in user for semantic search (files uploaded before it was set up). */
+export async function buildSearchIndex(): Promise<{ enabled: boolean; files: number; chunks: number }> {
+  const { data, error } = await supabase.functions.invoke('index-lease', { body: { all: true } })
+  if (error) {
+    if (error.name === 'FunctionsFetchError') throw new Error(translator(common).t('functionUnreachable', { name: 'index-lease' }))
+    const body = await error.context?.json?.().catch(() => null)
+    throw new Error(body?.error ?? error.message)
+  }
+  return { enabled: data?.enabled !== false, files: data?.files ?? 0, chunks: data?.chunks ?? 0 }
 }
 
 export async function deleteLeaseFile(file: LeaseFile) {
   console.info(`[lease ${file.id.slice(0, 8)}] delete: deleting ${file.file_name}`)
+  // Drop its semantic search vectors first; best effort, the index is optional.
+  const { error: indexError } = await supabase.functions.invoke('index-lease', { body: { fileId: file.id, remove: true } })
+  if (indexError) console.warn(`[lease ${file.id.slice(0, 8)}] delete: removing search vectors failed`, indexError.message)
   const folder = folderOf(file.storage_path)
   const { data: objects } = await supabase.storage.from(BUCKET).list(folder)
   const paths = (objects ?? []).map((o) => `${folder}/${o.name}`)
