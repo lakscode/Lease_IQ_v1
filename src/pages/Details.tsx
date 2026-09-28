@@ -20,6 +20,7 @@ import { CamReconciliation } from '../components/CamReconciliation'
 import { useDialog } from '../components/Dialog'
 import { SystemRecordPanel } from '../components/SystemRecordPanel'
 import { UploadAmendmentButton } from '../components/UploadAmendment'
+import { overview } from '../i18n/messages/overview'
 import { daysFromToday, latestExpiration, parseDate } from '../lib/leaseStatus'
 import { downloadLeaseReport, leaseSections } from '../lib/leaseReport'
 import {
@@ -305,6 +306,7 @@ export function Details() {
   const dialog = useDialog()
   const { t, tp, locale } = useT(details)
   const { t: tc } = useT(common)
+  const { t: to } = useT(overview)
 
   const load = () =>
     Promise.all([supabase.from('leases').select('*'), supabase.from('lease_files').select('*')]).then(
@@ -411,6 +413,9 @@ export function Details() {
             </div>
             <div className="dash-actions">
               <Link to={`/chat?lease=${lease.id}`} className="btn btn-sm">{t('askAboutLease')}</Link>
+              {main?.doc_type === 'main_lease' && (
+                <Link to={`/leases/${main.id}/overview`} className="btn btn-ghost btn-sm" title={to('overviewTitle')}>{to('overview')}</Link>
+              )}
               {main?.doc_type === 'main_lease' && <UploadAmendmentButton lease={main} onDone={load} />}
               <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title={t('editTitle')}>{tc('edit')}</button>
               <button className="btn btn-ghost btn-sm" onClick={() => setViewing(lease)}>{t('text')}</button>

@@ -3,7 +3,7 @@ import { translator, type Vars } from '../i18n'
 import { libHealth } from '../i18n/messages/libHealth'
 
 // Must match FUNCTION_VERSION in supabase/functions/analyze-lease/index.ts.
-export const EXPECTED_FUNCTION_VERSION = '11'
+export const EXPECTED_FUNCTION_VERSION = '13'
 
 export type SetupIssue = { key: string; message: string }
 

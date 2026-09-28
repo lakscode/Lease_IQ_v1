@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { DOC_TYPE_LABELS, openStoredPdf, type Lease, type LeaseFile } from '../lib/leases'
 import { translator, useT } from '../i18n'
 import { UploadAmendmentButton } from './UploadAmendment'
+import { overview } from '../i18n/messages/overview'
 import { details } from '../i18n/messages/details'
 
 export type DocEntry = {
@@ -66,6 +67,7 @@ export function DocumentCells({ entry, onViewText, onToggle, onAmendmentUploaded
 }) {
   const { lease, child, note } = entry
   const { t } = useT(details)
+  const { t: to } = useT(overview)
   const [error, setError] = useState<string | null>(null)
 
   const openPdf = () => {
@@ -99,6 +101,11 @@ export function DocumentCells({ entry, onViewText, onToggle, onAmendmentUploaded
           <button className="btn btn-ghost btn-sm" onClick={() => onViewText(lease)}>{t('text')}</button>
           <button className="btn btn-ghost btn-sm" onClick={openPdf} disabled={!lease.storage_path}>{t('pdf')}</button>
         </div>
+        {lease.doc_type === 'main_lease' && (
+          <Link to={`/leases/${lease.id}/overview`} className="btn btn-ghost btn-sm" title={to('overviewTitle')}>
+            {to('overview')}
+          </Link>
+        )}
         {onToggle && !!entry.childCount && (
           <button
             className={`btn btn-sm doc-toggle${entry.expanded ? ' btn-ghost' : ''}`}

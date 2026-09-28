@@ -390,11 +390,11 @@ async function analyzeFile(
     target = data
     await log(target ? 'info' : 'warn', 'target', target ? `Uploaded as an amendment for "${data!.title}"` : 'Target main lease not found; linking by matching', { targetId })
   }
-  const mains = [...(target ? [target] : []), ...(existingMains ?? []).filter((m) => m.id !== target?.id)]
+  const linkable = [...(target ? [target] : []), ...(existingMains ?? []).filter((m) => m.id !== target?.id)]
 
-  const documents = await callClaude(pageText, pages.length, mains, target, model, recordUsage, log)
+  const documents = await callClaude(pageText, pages.length, linkable, target, model, recordUsage, log)
 
-  const { rows, links } = buildLeaseRows(documents, pageCount || pages.length, new Set(mains.map((m) => m.id as string)), (target?.id as string | undefined) ?? null)
+  const { rows, links } = buildLeaseRows(documents, pageCount || pages.length, new Set(linkable.map((m) => m.id as string)), (target?.id as string | undefined) ?? null)
   await log('info', 'build-rows', `Prepared ${rows.length} document record(s)`, { links })
   const unlinked = rows.filter((r) => r.doc_type !== 'main_lease' && r.parent_id === null)
   if (unlinked.length) {

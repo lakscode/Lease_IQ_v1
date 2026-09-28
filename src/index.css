@@ -376,6 +376,65 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .actions .btn + .btn, .actions .btn + input[hidden] + .btn { margin-left: 0.35rem; }
 .child-cell { padding-left: 1.5rem !important; }
 .tree-branch { color: var(--border-strong); margin-right: 0.4rem; }
+.doc-actions > a.btn { justify-content: center; margin: 0.35rem 0 0 !important; display: flex; width: 100%; }
+
+/* Lease overview: the main lease and all its amendments on one page */
+.ov-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; flex-wrap: wrap; margin: 0.25rem 0 1.5rem; }
+.ov-head-main { flex: 1 1 28rem; min-width: 0; }
+.ov-head-main h1 { margin: 0.15rem 0 0.75rem; font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 800; letter-spacing: -0.025em; }
+.ov-eyebrow { margin: 0; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--btn); }
+.ov-facts { display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; margin: 0; }
+.ov-facts dt { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.ov-facts dd { margin: 0.1rem 0 0; font-weight: 500; }
+.ov-head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; }
+.ov-status { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.8rem; border-radius: 999px; background: var(--hover); font-size: 0.875rem; }
+.ov-status-dot { width: 9px; height: 9px; border-radius: 50%; background: #94a3b8; }
+.ov-status-active { background: #e7f6e7; } .ov-status-active .ov-status-dot { background: #0ca30c; }
+.ov-status-expired { background: #fde8e8; } .ov-status-expired .ov-status-dot { background: #d03b3b; }
+.ov-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.35rem; }
+.ov-actions input[hidden] + .btn { margin: 0; }
+
+.ov-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.ov-card { padding: 1.25rem 1.35rem; }
+.ov-card h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+.ov-card > .muted.small { margin: 0.2rem 0 1rem; }
+
+.ov-timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+.ov-timeline::before { content: ''; position: absolute; left: 7px; top: 0.9rem; bottom: 0.9rem; width: 2px; background: var(--border); }
+.ov-item { position: relative; padding-left: 1.75rem; }
+.ov-item + .ov-item { margin-top: 0.75rem; }
+.ov-node { position: absolute; left: 0; top: 1.05rem; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); border: 3px solid var(--border-strong); }
+.ov-item-main_lease .ov-node { border-color: #1e40af; background: #dbeafe; }
+.ov-item-amendment .ov-node { border-color: #5b21b6; }
+.ov-doc {
+  display: block; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.ov-doc:hover { border-color: var(--btn); box-shadow: var(--shadow); }
+.ov-doc:focus-visible { outline: 2px solid var(--btn); outline-offset: 2px; }
+.ov-doc-top { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.ov-doc-title { margin-top: 0.45rem; font-weight: 700; overflow-wrap: anywhere; }
+.ov-doc-summary { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.875rem; }
+.ov-doc-changes { margin-top: 0.55rem; padding: 0.5rem 0.65rem; border-left: 3px solid #a78bfa; background: #f5f3ff; border-radius: 0 6px 6px 0; font-size: 0.85rem; }
+.ov-doc-changes span { display: block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #5b21b6; margin-bottom: 0.15rem; }
+.ov-doc-foot { display: flex; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.ov-doc-open { color: var(--btn); font-weight: 600; opacity: 0; transition: opacity 0.15s; }
+.ov-doc:hover .ov-doc-open, .ov-doc:focus-visible .ov-doc-open { opacity: 1; }
+@media (hover: none) { .ov-doc-open { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ov-doc, .ov-doc-open { transition: none; } }
+
+.ov-terms { font-size: 0.85rem; }
+.ov-terms tbody tr:last-child > * { border-bottom: none; }
+.ov-terms th[scope="row"] { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: none; letter-spacing: 0; background: none; width: 30%; }
+.ov-terms td:nth-child(2) { overflow-wrap: anywhere; }
+.ov-source { color: var(--muted); font-size: 0.8rem; }
+.ov-source.is-amended { color: #5b21b6; font-weight: 600; }
+.ov-source:hover { text-decoration: underline; }
+@media (max-width: 900px) {
+  .ov-grid { grid-template-columns: minmax(0, 1fr); }
+  .ov-head-side { align-items: flex-start; }
+  .ov-actions { justify-content: flex-start; }
+}
 .doc-toggle { white-space: nowrap; }
 .doc-toggle-icon { display: inline-block; font-size: 0.7rem; transition: transform 0.15s; }
 .doc-toggle-icon.is-open { transform: rotate(90deg); }

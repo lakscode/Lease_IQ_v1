@@ -12,6 +12,7 @@ import { ResetPassword } from './pages/ResetPassword'
 import { LeaseAbstraction } from './pages/LeaseAbstraction'
 import { Settings } from './pages/Settings'
 import { Details } from './pages/Details'
+import { LeaseOverview } from './pages/LeaseOverview'
 import { Chat } from './pages/Chat'
 import { Import } from './pages/Import'
 
@@ -40,6 +41,14 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <LeaseAbstraction />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/leases/:id/overview"
+                element={
+                  <ProtectedRoute>
+                    <LeaseOverview />
                   </ProtectedRoute>
                 }
               />
