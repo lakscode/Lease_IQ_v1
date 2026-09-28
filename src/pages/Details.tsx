@@ -30,14 +30,22 @@ import {
   type InsightGroup,
   type LeaseInsights,
 } from '../lib/insights'
+import { formatDate, formatDateTime, formatNumber, translator, useT, type Translator } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { details } from '../i18n/messages/details'
+import { libLeases } from '../i18n/messages/libLeases'
 
-const pages = (l: Lease) => (l.page_start === l.page_end ? `p. ${l.page_start}` : `p. ${l.page_start}–${l.page_end}`)
+type DetailsT = Translator<(typeof details)['en']>['t']
+type DetailsTp = Translator<(typeof details)['en']>['tp']
 
-function describeExpiry(d: Date) {
+const pages = (l: Lease, t: DetailsT) =>
+  l.page_start === l.page_end ? t('pageSingle', { page: l.page_start }) : t('pageRange', { start: l.page_start, end: l.page_end })
+
+function describeExpiry(d: Date, t: DetailsT, tp: DetailsTp) {
   const days = daysFromToday(d)
-  if (days < 0) return `expired ${-days} days ago`
-  if (days === 0) return 'expires today'
-  return `in ${days} days`
+  if (days < 0) return tp('expiredAgo', -days)
+  if (days === 0) return t('expiresToday')
+  return tp('inDays', days)
 }
 
 type Task = { key: string; text: string; due: string; urgent: boolean }
@@ -94,6 +102,7 @@ const INSIGHTS_POLL_MS = 4000
 
 /** Revenue and risk opportunities of the lease family, generated on demand. */
 function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: string }) {
+  const { t, tp } = useT(details)
   const [insights, setInsights] = useState<LeaseInsights | null | undefined>(undefined)
   const [requesting, setRequesting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -131,26 +140,32 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
   const bar = (
     <div className="insights-bar panel-wide">
       <div>
-        <strong>Revenue and risk opportunities</strong>
+        <strong>{t('insightsTitle')}</strong>
         <div className="muted small">
           {busy
-            ? 'Reading the lease and its amendments… this usually takes a minute or two.'
+            ? t('insightsBusy')
             : ready && insights?.generated_at
-              ? `Generated ${new Date(insights.generated_at).toLocaleString()}${insights.model ? ` with ${insights.model}` : ''} from the main lease and all its amendments.`
-              : 'AI reviews the main lease and all its amendments for the items below.'}
+              ? insights.model
+                ? t('insightsGeneratedWithModel', { date: formatDateTime(insights.generated_at), model: insights.model })
+                : t('insightsGenerated', { date: formatDateTime(insights.generated_at) })
+              : t('insightsIntro')}
         </div>
-        {failed && <div className="error small">Generation failed{insights?.error ? `: ${insights.error}` : ''}. Try again.</div>}
+        {failed && (
+          <div className="error small">
+            {insights?.error ? t('generationFailedWithError', { error: insights.error }) : t('generationFailed')}
+          </div>
+        )}
         {error && <div className="error small">{error}</div>}
       </div>
       <button className="btn btn-sm" onClick={generate} disabled={busy || insights === undefined}>
         {busy ? (
           <>
-            <span className="spinner" role="status" aria-label="Generating" /> Generating…
+            <span className="spinner" role="status" aria-label={t('generatingAria')} /> {t('generating')}
           </>
         ) : ready ? (
-          'Refresh'
+          t('refresh')
         ) : (
-          'Generate'
+          t('generate')
         )}
       </button>
     </div>
@@ -162,9 +177,9 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
     const absent = items.filter((i) => i.status === 'none')
     const actions = items.filter((i) => i.status === 'action').length
     return (
-      <Panel title={title} icon={icon} color={color} wide aside={ready ? `${actions} action${actions === 1 ? '' : 's'}` : undefined}>
+      <Panel title={title} icon={icon} color={color} wide aside={ready ? tp('actions', actions) : undefined}>
         {!ready ? (
-          <p className="muted panel-empty">{busy ? 'Generating…' : 'Not generated yet. Click Generate above.'}</p>
+          <p className="muted panel-empty">{busy ? t('generating') : t('notGenerated')}</p>
         ) : (
           <>
             <ul className="insight-list">
@@ -174,17 +189,17 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
                   <div className="insight-body">
                     <div className="insight-title">
                       {i.label}
-                      {i.status === 'action' && i.priority === 'high' && <span className="insight-priority">High priority</span>}
+                      {i.status === 'action' && i.priority === 'high' && <span className="insight-priority">{t('highPriority')}</span>}
                     </div>
                     <div>{i.summary}</div>
                     {i.detail && <div className="muted small insight-detail">{i.detail}</div>}
                     {(i.due_date || i.amount || i.citations.length > 0) && (
                       <div className="insight-meta small">
-                        {i.due_date && <span>Due {i.due_date}</span>}
+                        {i.due_date && <span>{t('dueDate', { date: i.due_date })}</span>}
                         {i.amount && <span>{i.amount}</span>}
                         {i.citations.map((c) => (
                           <Link key={`${c.leaseId}:${c.page}`} to={`/leases/${c.leaseId}`} className="chat-source" title={c.title}>
-                            {c.leaseId === leaseId ? '' : `${c.title}, `}p. {c.page}
+                            {c.leaseId === leaseId ? t('pageSingle', { page: c.page }) : t('citationWithTitle', { title: c.title, page: c.page })}
                           </Link>
                         ))}
                       </div>
@@ -194,7 +209,7 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
               ))}
             </ul>
             {absent.length > 0 && (
-              <p className="muted small insight-absent">Not in lease: {absent.map((i) => i.label).join(', ')}</p>
+              <p className="muted small insight-absent">{t('notInLease', { items: absent.map((i) => i.label).join(', ') })}</p>
             )}
           </>
         )}
@@ -205,9 +220,9 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
   return (
     <>
       {bar}
-      {panel('revenue', 'Revenue opportunities', '📈', 'purple')}
-      {panel('risk', 'Risk opportunities', '🛡️', 'yellow')}
-      <Panel title="CAM reconciliation" icon="🧾" color="purple" wide>
+      {panel('revenue', t('revenueOpportunities'), '📈', 'purple')}
+      {panel('risk', t('riskOpportunities'), '🛡️', 'yellow')}
+      <Panel title={t('camReconciliation')} icon="🧾" color="purple" wide>
         <CamReconciliation familyId={familyId} terms={insights?.cam ?? null} ready={ready} />
       </Panel>
     </>
@@ -216,6 +231,8 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
 
 /** Claude token usage of the file this document came from, one row per analysis run. */
 function UsagePanel({ fileId }: { fileId: string }) {
+  const { t, tp } = useT(details)
+  const { t: tc } = useT(common)
   const [runs, setRuns] = useState<AiUsage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -223,10 +240,10 @@ function UsagePanel({ fileId }: { fileId: string }) {
     fetchFileUsage(fileId).then(setRuns, (e) => setError(e.message))
   }, [fileId])
 
-  if (error) return <p className="error small">Could not load token usage: {error}</p>
-  if (!runs) return <p className="muted small">Loading…</p>
+  if (error) return <p className="error small">{t('usageError', { error })}</p>
+  if (!runs) return <p className="muted small">{tc('loading')}</p>
   if (!runs.length) {
-    return <p className="muted panel-empty">No usage recorded yet. Usage is saved from the next analysis or re-analysis of this file.</p>
+    return <p className="muted panel-empty">{t('noUsage')}</p>
   }
 
   const input = runs.reduce((n, u) => n + totalInputTokens(u), 0)
@@ -235,10 +252,10 @@ function UsagePanel({ fileId }: { fileId: string }) {
     <table className="panel-table">
       <thead>
         <tr>
-          <th>Run</th>
-          <th>Model</th>
-          <th className="panel-num">Input</th>
-          <th className="panel-num">Output</th>
+          <th>{t('colRun')}</th>
+          <th>{t('colModel')}</th>
+          <th className="panel-num">{t('colInput')}</th>
+          <th className="panel-num">{t('colOutput')}</th>
         </tr>
       </thead>
       <tbody>
@@ -246,15 +263,19 @@ function UsagePanel({ fileId }: { fileId: string }) {
           <tr key={u.id}>
             <td>
               {PROCESS_LABELS[u.process]}
-              <div className="muted small">{new Date(u.created_at).toLocaleString()}</div>
+              <div className="muted small">{formatDateTime(u.created_at)}</div>
             </td>
             <td className="small">
               {u.model}
-              {u.served_by && u.served_by !== u.model && <div className="muted small">served by {u.served_by}</div>}
+              {u.served_by && u.served_by !== u.model && <div className="muted small">{t('servedBy', { model: u.served_by })}</div>}
             </td>
             <td
               className="panel-num"
-              title={`${u.input_tokens.toLocaleString()} uncached · ${u.cache_read_input_tokens.toLocaleString()} cache read · ${u.cache_creation_input_tokens.toLocaleString()} cache write`}
+              title={t('inputBreakdown', {
+                uncached: formatNumber(u.input_tokens),
+                cacheRead: formatNumber(u.cache_read_input_tokens),
+                cacheWrite: formatNumber(u.cache_creation_input_tokens),
+              })}
             >
               {formatTokens(totalInputTokens(u))}
             </td>
@@ -262,9 +283,9 @@ function UsagePanel({ fileId }: { fileId: string }) {
           </tr>
         ))}
         <tr className="usage-total">
-          <td colSpan={2}>Total ({runs.length} {runs.length === 1 ? 'run' : 'runs'})</td>
-          <td className="panel-num" title={`${input.toLocaleString()} tokens`}>{formatTokens(input)}</td>
-          <td className="panel-num" title={`${output.toLocaleString()} tokens`}>{formatTokens(output)}</td>
+          <td colSpan={2}>{tp('totalRuns', runs.length)}</td>
+          <td className="panel-num" title={t('tokensCount', { count: formatNumber(input) })}>{formatTokens(input)}</td>
+          <td className="panel-num" title={t('tokensCount', { count: formatNumber(output) })}>{formatTokens(output)}</td>
         </tr>
       </tbody>
     </table>
@@ -281,6 +302,8 @@ export function Details() {
   const [reporting, setReporting] = useState(false)
   const [editing, setEditing] = useState(false)
   const dialog = useDialog()
+  const { t, tp, locale } = useT(details)
+  const { t: tc } = useT(common)
 
   useEffect(() => {
     setLoading(true)
@@ -315,30 +338,32 @@ export function Details() {
 
   const tasks = useMemo<Task[]>(() => {
     if (!lease) return []
+    // Task text also goes into the PDF report; `locale` re-runs this after a language switch.
+    const { t } = translator(details, locale)
     const list: Task[] = []
     if (file?.status === 'failed') {
-      list.push({ key: 'failed', text: `Retry "${file.file_name}"`, due: 'Now', urgent: true })
+      list.push({ key: 'failed', text: t('taskRetry', { file: file.file_name }), due: t('dueNow'), urgent: true })
     }
     if (lease.doc_type !== 'main_lease' && lease.doc_type !== 'other' && !lease.parent_id) {
-      list.push({ key: 'parent', text: 'Upload the main lease for this document', due: 'Now', urgent: true })
+      list.push({ key: 'parent', text: t('taskUploadMain'), due: t('dueNow'), urgent: true })
     }
     if (familyExpiration && daysFromToday(familyExpiration) <= 365) {
       const days = daysFromToday(familyExpiration)
       list.push({
         key: 'expiry',
-        text: days < 0 ? 'Lease has expired — confirm holdover or renewal' : 'Review renewal or exit',
-        due: familyExpiration.toLocaleDateString(),
+        text: days < 0 ? t('taskExpired') : t('taskReviewRenewal'),
+        due: formatDate(familyExpiration, undefined, locale),
         urgent: days <= 90,
       })
     }
     if (a.renewal_options && familyExpiration && daysFromToday(familyExpiration) >= 0) {
-      list.push({ key: 'renewal', text: 'Check the renewal option notice period', due: familyExpiration.toLocaleDateString(), urgent: false })
+      list.push({ key: 'renewal', text: t('taskCheckNotice'), due: formatDate(familyExpiration, undefined, locale), urgent: false })
     }
     if (!familyExpiration) {
-      list.push({ key: 'no-expiry', text: 'Confirm the expiration date', due: '—', urgent: false })
+      list.push({ key: 'no-expiry', text: t('taskConfirmExpiration'), due: '—', urgent: false })
     }
     return list
-  }, [lease, file, familyExpiration, a.renewal_options])
+  }, [lease, file, familyExpiration, a.renewal_options, locale])
 
   const downloadReport = async () => {
     if (!lease) return
@@ -346,7 +371,7 @@ export function Details() {
     try {
       await downloadLeaseReport({ lease, fileName: file?.file_name ?? null, family, tasks, familyId: main?.id ?? lease.id })
     } catch (e) {
-      await dialog.alert({ title: 'Could not create the report', message: e instanceof Error ? e.message : String(e) })
+      await dialog.alert({ title: t('reportError'), message: e instanceof Error ? e.message : String(e) })
     } finally {
       setReporting(false)
     }
@@ -355,7 +380,7 @@ export function Details() {
   if (loading) {
     return (
       <main className="container wide">
-        <p className="muted">Loading…</p>
+        <p className="muted">{tc('loading')}</p>
       </main>
     )
   }
@@ -363,8 +388,8 @@ export function Details() {
   if (!lease) {
     return (
       <main className="container wide">
-        <p className="error">{error ?? 'Document not found.'}</p>
-        <Link to="/leases" className="btn btn-ghost">← Back to Lease Abstraction</Link>
+        <p className="error">{error ?? t('notFound')}</p>
+        <Link to="/leases" className="btn btn-ghost">{t('backToLeases')}</Link>
       </main>
     )
   }
@@ -377,57 +402,57 @@ export function Details() {
         <div className="dash-title">
           <div className="dash-title-row">
             <div>
-              <Link to="/leases" className="dash-back">← Lease Abstraction</Link>
+              <Link to="/leases" className="dash-back">← {tc('navLeases')}</Link>
               <h1>{lease.title}</h1>
             </div>
             <div className="dash-actions">
-              <Link to={`/chat?lease=${lease.id}`} className="btn btn-sm">Ask about this lease</Link>
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title="Correct the extracted details">Edit</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setViewing(lease)}>Text</button>
+              <Link to={`/chat?lease=${lease.id}`} className="btn btn-sm">{t('askAboutLease')}</Link>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title={t('editTitle')}>{tc('edit')}</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setViewing(lease)}>{t('text')}</button>
               <button
                 className="btn btn-ghost btn-sm"
                 disabled={!lease.storage_path}
-                onClick={() => lease.storage_path && openStoredPdf(lease.storage_path).catch((e) => dialog.alert({ title: 'Could not open the PDF', message: e.message }))}
+                onClick={() => lease.storage_path && openStoredPdf(lease.storage_path).catch((e) => dialog.alert({ title: t('pdfError'), message: e.message }))}
               >
-                PDF
+                {t('pdf')}
               </button>
-              <button className="btn btn-ghost btn-sm" onClick={downloadReport} disabled={reporting} title="Download this lease abstract as a PDF report">
-                {reporting ? 'Preparing…' : 'Report'}
+              <button className="btn btn-ghost btn-sm" onClick={downloadReport} disabled={reporting} title={t('reportTitle')}>
+                {reporting ? t('preparing') : t('report')}
               </button>
             </div>
           </div>
           <p>
             <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>{' '}
-            {pages(lease)} of {file?.file_name ?? 'unknown file'}
+            {t('pagesOfFile', { pages: pages(lease, t), file: file?.file_name ?? t('unknownFile') })}
             {lease.summary && <> · {lease.summary}</>}
-            {lease.edited_at && <span className="muted small"> · Edited {new Date(lease.edited_at).toLocaleString()}</span>}
+            {lease.edited_at && <span className="muted small"> · {t('editedAt', { date: formatDateTime(lease.edited_at) })}</span>}
           </p>
         </div>
 
         <div className="dash-board">
           {error && <p className="error">{error}</p>}
           <div className="dash-grid">
-            <Panel title="Property" icon="🏢" color="purple">
+            <Panel title={t('panelProperty')} icon="🏢" color="purple">
               <Terms rows={sections.property} />
             </Panel>
 
-            <Panel title="Rent" icon="💵" color="yellow">
+            <Panel title={t('panelRent')} icon="💵" color="yellow">
               <Terms rows={sections.rent} />
             </Panel>
 
-            <Panel title="Lease dates" icon="💬" color="purple">
+            <Panel title={t('panelDates')} icon="💬" color="purple">
               <Terms
                 rows={sections.dates.map(([label, value]): [string, ReactNode, string?] =>
-                  label === 'Expiration' ? [label, value, expiration ? describeExpiry(expiration) : undefined] : [label, value],
+                  label === translator(libLeases).t('field_expiration') ? [label, value, expiration ? describeExpiry(expiration, t, tp) : undefined] : [label, value],
                 )}
               />
             </Panel>
 
-            <Panel title="Options" icon="📐" color="yellow">
+            <Panel title={t('panelOptions')} icon="📐" color="yellow">
               <Terms rows={sections.options} />
             </Panel>
 
-            <Panel title="Related documents" icon="📄" color="purple">
+            <Panel title={t('panelRelated')} icon="📄" color="purple">
               <table className="panel-table">
                 <tbody>
                   {family.map((doc) => (
@@ -447,24 +472,24 @@ export function Details() {
                   ))}
                 </tbody>
               </table>
-              {!main && <p className="muted small">Main lease not found.</p>}
+              {!main && <p className="muted small">{t('mainNotFound')}</p>}
             </Panel>
 
-            <Panel title="Alerts and tasks" icon="🔔" color="yellow" aside="Due">
+            <Panel title={t('panelTasks')} icon="🔔" color="yellow" aside={t('due')}>
               {tasks.length === 0 ? (
-                <p className="muted panel-empty">Nothing needs attention.</p>
+                <p className="muted panel-empty">{t('nothingNeeded')}</p>
               ) : (
                 <table className="panel-table">
                   <tbody>
-                    {tasks.map((t) => (
-                      <tr key={t.key}>
+                    {tasks.map((task) => (
+                      <tr key={task.key}>
                         <td>
                           <span className="task-arrow" aria-hidden>▶</span>
-                          {t.text}
+                          {task.text}
                         </td>
-                        <td className="panel-num nowrap">{t.due}</td>
+                        <td className="panel-num nowrap">{task.due}</td>
                         <td className="panel-num">
-                          <span className={`task-flag${t.urgent ? ' task-flag-urgent' : ''}`} title={t.urgent ? 'Urgent' : undefined} />
+                          <span className={`task-flag${task.urgent ? ' task-flag-urgent' : ''}`} title={task.urgent ? t('urgent') : undefined} />
                         </td>
                       </tr>
                     ))}
@@ -473,21 +498,21 @@ export function Details() {
               )}
             </Panel>
 
-            <Panel title="Clauses" icon="📑" color="yellow" wide>
+            <Panel title={t('panelClauses')} icon="📑" color="yellow" wide>
               <LeaseClauses leaseId={lease.id} />
             </Panel>
 
-            <Panel title="System records" icon="🗄️" color="yellow" wide aside="Yardi / MRI / CSV">
+            <Panel title={t('panelSystem')} icon="🗄️" color="yellow" wide aside="Yardi / MRI / CSV">
               <SystemRecordPanel family={family} />
             </Panel>
 
             <InsightPanels familyId={main?.id ?? lease.id} leaseId={lease.id} />
 
-            <Panel title="Edit history" icon="🕘" color="yellow" wide>
+            <Panel title={t('panelHistory')} icon="🕘" color="yellow" wide>
               <LeaseHistory leaseId={lease.id} version={lease.edited_at} />
             </Panel>
 
-            <Panel title="AI usage" icon="🪙" color="purple" wide aside="Whole file">
+            <Panel title={t('panelUsage')} icon="🪙" color="purple" wide aside={t('wholeFile')}>
               <UsagePanel fileId={lease.file_id} />
             </Panel>
           </div>

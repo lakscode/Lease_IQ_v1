@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { EDITABLE_SECTIONS, fieldValue, updateLeaseDetails, type EditableField, type Lease } from '../lib/leases'
+import { useT } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { details } from '../i18n/messages/details'
 
 type Key = EditableField['key']
 
 /** Modal form for correcting a document's details. Only changed fields are saved (and recorded in its history). */
 export function LeaseEditor({ lease, onClose, onSaved }: { lease: Lease; onClose: () => void; onSaved: (lease: Lease) => void }) {
+  const { t, tp } = useT(details)
+  const { t: tc } = useT(common)
   const sections = useMemo(
     () =>
       EDITABLE_SECTIONS.map((s) => ({
@@ -43,10 +48,10 @@ export function LeaseEditor({ lease, onClose, onSaved }: { lease: Lease; onClose
 
   return (
     <div className="modal-backdrop" onClick={() => !saving && onClose()}>
-      <form className="modal card" onClick={(e) => e.stopPropagation()} onSubmit={save} role="dialog" aria-label={`Edit ${lease.title}`}>
+      <form className="modal card" onClick={(e) => e.stopPropagation()} onSubmit={save} role="dialog" aria-label={t('editAria', { title: lease.title })}>
         <div className="modal-header">
-          <h3>Edit details</h3>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={saving}>Cancel</button>
+          <h3>{t('editDetails')}</h3>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} disabled={saving}>{tc('cancel')}</button>
         </div>
         <div className="modal-body lease-edit">
           {sections.map((s) => (
@@ -71,10 +76,10 @@ export function LeaseEditor({ lease, onClose, onSaved }: { lease: Lease; onClose
         <div className="modal-footer">
           {error && <span className="error small">{error}</span>}
           <span className="muted small">
-            {changed.length ? `${changed.length} field${changed.length === 1 ? '' : 's'} changed` : 'No changes'} · changes are kept in the edit history
+            {changed.length ? tp('fieldsChanged', changed.length) : t('noChanges')} · {t('historyNote')}
           </span>
           <button type="submit" className="btn btn-sm" disabled={saving || !changed.length}>
-            {saving ? 'Saving…' : 'Save changes'}
+            {saving ? tc('saving') : t('saveChanges')}
           </button>
         </div>
       </form>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DOC_TYPE_LABELS, type Lease } from '../lib/leases'
@@ -19,39 +19,40 @@ import {
   type ImportSource,
 } from '../lib/imports'
 import { useDialog } from '../components/Dialog'
+import { formatDateTime, formatNumber, useT } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { importPage } from '../i18n/messages/import'
 
-const SOURCE_GUIDES: Record<ImportSource, { title: string; steps: string[]; note?: string }> = {
+type ImportKey = keyof typeof importPage.en
+
+// Message keys for each source's export instructions.
+const SOURCE_GUIDES: Record<ImportSource, { title: ImportKey; steps: ImportKey[]; note?: ImportKey }> = {
   yardi: {
-    title: 'Export a rent roll from Yardi Voyager',
-    steps: [
-      'In Yardi Voyager (Commercial), open Reports and run the Commercial Rent Roll (or "Rent Roll with Lease Charges") report.',
-      'Select the property or property list and today\'s date as the "As of" date. Include current and future leases.',
-      'Include the lease charges: base rent (e.g. rnt), CAM, real estate tax and insurance. They can be columns, or one row per charge code; both are supported.',
-      'Include the security deposit and the future rent / rent steps if your report layout offers them.',
-      'Export to Excel, then in Excel choose File → Save As → CSV (Comma delimited) and upload the CSV here.',
-    ],
-    note: 'A live connection to Yardi (Voyager web services) needs an interface licence and credentials from Yardi; file export works with any Yardi setup.',
+    title: 'yardiTitle',
+    steps: ['yardiStep1', 'yardiStep2', 'yardiStep3', 'yardiStep4', 'yardiStep5'],
+    note: 'yardiNote',
   },
   mri: {
-    title: 'Export a rent roll from MRI',
-    steps: [
-      'In MRI Commercial Management, open Reports and run the Rent Roll (or Tenancy Schedule) report.',
-      'Select the buildings (Bldg Id) and today\'s date as the as-of date. Include current and future leases.',
-      'Include recurring charges by income category: base rent (e.g. RNT), CAM, RET (real estate tax) and INS. Columns or one row per income category both work.',
-      'Include the security deposit and next rent step if available.',
-      'Export to Excel, then in Excel choose File → Save As → CSV (Comma delimited) and upload the CSV here.',
-    ],
-    note: 'A live connection to MRI (MRI Open API) needs API credentials from MRI; file export works with any MRI setup.',
+    title: 'mriTitle',
+    steps: ['mriStep1', 'mriStep2', 'mriStep3', 'mriStep4', 'mriStep5'],
+    note: 'mriNote',
   },
   csv: {
-    title: 'Upload a CSV rent roll',
-    steps: [
-      'Download the template below and fill in one row per lease. Keep the header row.',
-      'Only Tenant is required; fill in as many other columns as you have. Amounts are monthly unless the column says otherwise.',
-      'Dates can be YYYY-MM-DD or MM/DD/YYYY. Amounts can include $ and commas.',
-      'Save as CSV (UTF-8) and upload it here.',
-    ],
+    title: 'csvTitle',
+    steps: ['csvStep1', 'csvStep2', 'csvStep3', 'csvStep4'],
   },
+}
+
+/** Renders a translated sentence with one {placeholder} replaced by a React node. */
+function withNode(text: string, placeholder: string, node: ReactNode) {
+  const [before, after = ''] = text.split(`{${placeholder}}`)
+  return (
+    <>
+      {before}
+      {node}
+      {after}
+    </>
+  )
 }
 
 type Parsed = {
@@ -63,6 +64,8 @@ type Parsed = {
 
 export function Import() {
   const dialog = useDialog()
+  const { t, tp } = useT(importPage)
+  const { t: tc } = useT(common)
   const [source, setSource] = useState<ImportSource>('yardi')
   const [parsed, setParsed] = useState<Parsed | null>(null)
   const [leases, setLeases] = useState<Lease[]>([])
@@ -103,12 +106,12 @@ export function Import() {
     setError(null)
     setOverrides({})
     if (!/\.csv$/i.test(file.name)) {
-      setError('Please upload a .csv file. For an Excel export, open it in Excel and use File → Save As → CSV.')
+      setError(t('notCsv'))
       return
     }
     const rows = parseCsv(await file.text())
     if (rows.length < 2) {
-      setError('The file has no data rows.')
+      setError(t('noDataRows'))
       return
     }
     const { headerRow, map } = detectColumns(rows, source)
@@ -139,7 +142,7 @@ export function Import() {
       setImports((list) => [imp, ...list])
       setParsed(null)
       setOverrides({})
-      setMessage(`Imported ${imp.row_count} lease record(s) from ${imp.file_name}; ${imp.matched_count} matched to leases in LeaseIQ.`)
+      setMessage(tp('imported', imp.row_count, { file: imp.file_name, matched: formatNumber(imp.matched_count) }))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -149,13 +152,9 @@ export function Import() {
 
   const removeImport = async (imp: DataImport) => {
     const ok = await dialog.confirm({
-      title: 'Delete this import?',
-      message: (
-        <>
-          The {imp.row_count} record(s) imported from <strong>{imp.file_name}</strong> will be deleted.
-        </>
-      ),
-      confirmLabel: 'Delete',
+      title: t('deleteTitle'),
+      message: withNode(tp('deleteMessage', imp.row_count), 'file', <strong>{imp.file_name}</strong>),
+      confirmLabel: tc('delete'),
       danger: true,
     })
     if (!ok) return
@@ -173,12 +172,8 @@ export function Import() {
 
   return (
     <main className="container wide">
-      <h1>Import data</h1>
-      <p className="muted">
-        Import your rent roll from a property management system or a CSV file. Each record is matched to a lease in LeaseIQ, so
-        the system's rent, dates, charges and deposits can be compared with the lease on its Details page and used when
-        generating revenue and risk opportunities.
-      </p>
+      <h1>{t('title')}</h1>
+      <p className="muted">{t('intro')}</p>
 
       <div className="import-tabs" role="tablist">
         {(['yardi', 'mri', 'csv'] as ImportSource[]).map((s) => (
@@ -190,33 +185,33 @@ export function Import() {
 
       <div className="import-grid">
         <section className="card">
-          <h2 className="import-heading">{guide.title}</h2>
+          <h2 className="import-heading">{t(guide.title)}</h2>
           <ol className="import-steps">
             {guide.steps.map((step) => (
-              <li key={step}>{step}</li>
+              <li key={step}>{t(step)}</li>
             ))}
           </ol>
           {source === 'csv' && (
             <button className="btn btn-ghost btn-sm" onClick={downloadCsvTemplate}>
-              ⬇ Download CSV template
+              {t('downloadTemplate')}
             </button>
           )}
-          {guide.note && <p className="muted small">{guide.note}</p>}
+          {guide.note && <p className="muted small">{t(guide.note)}</p>}
           <div className="import-upload">
             <button className="btn" onClick={() => inputRef.current?.click()}>
-              Upload {SOURCE_LABELS[source]} {source === 'csv' ? 'file' : 'export (CSV)'}
+              {t(source === 'csv' ? 'uploadCsvFile' : 'uploadExport', { source: SOURCE_LABELS[source] })}
             </button>
             <input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={onFile} />
           </div>
         </section>
 
         <section className="card">
-          <h2 className="import-heading">Data we use</h2>
+          <h2 className="import-heading">{t('dataWeUse')}</h2>
           <table className="panel-table import-fields">
             <thead>
               <tr>
-                <th>Field</th>
-                <th>{source === 'csv' ? 'Template column' : `Typical ${SOURCE_LABELS[source]} column`}</th>
+                <th>{t('colField')}</th>
+                <th>{source === 'csv' ? t('colTemplate') : t('colTypical', { source: SOURCE_LABELS[source] })}</th>
               </tr>
             </thead>
             <tbody>
@@ -224,7 +219,7 @@ export function Import() {
                 <tr key={f.key}>
                   <td>
                     <span className="panel-strong">{f.label}</span>
-                    {f.required && <span className="import-required"> required</span>}
+                    {f.required && <span className="import-required"> {t('required')}</span>}
                     <div className="muted small">{f.description}</div>
                   </td>
                   <td className="small">{source === 'csv' ? f.template?.heading : f.aliases[source].slice(0, 3).join(', ')}</td>
@@ -244,21 +239,21 @@ export function Import() {
             <div>
               <h2>{parsed.fileName}</h2>
               <p className="muted small">
-                {records.length} lease record(s) found · {matchedCount} matched to leases · header on row {parsed.headerRow + 1}
+                {tp('previewSummary', records.length, { matched: formatNumber(matchedCount), row: formatNumber(parsed.headerRow + 1) })}
               </p>
             </div>
             <div className="section-actions">
               <button className="btn btn-ghost btn-sm" onClick={() => setParsed(null)} disabled={saving}>
-                Cancel
+                {tc('cancel')}
               </button>
               <button className="btn btn-sm" onClick={runImport} disabled={saving || !!missingTenant || !records.length}>
-                {saving ? 'Importing…' : `Import ${records.length} record(s)`}
+                {saving ? t('importing') : tp('importRecords', records.length)}
               </button>
             </div>
           </div>
 
-          <h3 className="cam-heading">Columns</h3>
-          {missingTenant && <p className="error small">Choose which column holds the tenant name.</p>}
+          <h3 className="cam-heading">{t('columns')}</h3>
+          {missingTenant && <p className="error small">{t('chooseTenantColumn')}</p>}
           <div className="import-mapping">
             {IMPORT_FIELDS.map((f) => (
               <label key={f.key}>
@@ -267,10 +262,10 @@ export function Import() {
                   {f.required && ' *'}
                 </span>
                 <select className="select" value={parsed.map[f.key] ?? ''} onChange={(e) => setColumn(f.key, e.target.value)}>
-                  <option value="">— not in file —</option>
+                  <option value="">{t('notInFile')}</option>
                   {headers.map((h, i) => (
                     <option key={i} value={i}>
-                      {h || `Column ${i + 1}`}
+                      {h || t('columnN', { n: i + 1 })}
                     </option>
                   ))}
                 </select>
@@ -278,19 +273,19 @@ export function Import() {
             ))}
           </div>
 
-          <h3 className="cam-heading">Records</h3>
+          <h3 className="cam-heading">{t('records')}</h3>
           <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Tenant</th>
-                  <th>Unit</th>
-                  <th>Lease dates</th>
-                  <th className="panel-num">Area</th>
-                  <th className="panel-num">Base rent / mo</th>
-                  <th className="panel-num">CAM / tax / ins</th>
-                  <th className="panel-num">Deposit</th>
-                  <th>Matched lease</th>
+                  <th>{t('colTenant')}</th>
+                  <th>{t('colUnit')}</th>
+                  <th>{t('colLeaseDates')}</th>
+                  <th className="panel-num">{t('colArea')}</th>
+                  <th className="panel-num">{t('colBaseRent')}</th>
+                  <th className="panel-num">{t('colCamTaxIns')}</th>
+                  <th className="panel-num">{t('colDeposit')}</th>
+                  <th>{t('colMatchedLease')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -304,20 +299,20 @@ export function Import() {
                     <td className="nowrap small">
                       {r.lease_start ?? '—'} → {r.lease_end ?? '—'}
                     </td>
-                    <td className="panel-num">{r.area_sqft?.toLocaleString() ?? '—'}</td>
-                    <td className="panel-num">{r.monthly_base_rent?.toLocaleString(undefined, { style: 'currency', currency: 'USD' }) ?? '—'}</td>
+                    <td className="panel-num">{r.area_sqft != null ? formatNumber(r.area_sqft) : '—'}</td>
+                    <td className="panel-num">{r.monthly_base_rent != null ? formatNumber(r.monthly_base_rent, { style: 'currency', currency: 'USD' }) : '—'}</td>
                     <td className="panel-num small">
-                      {[r.cam_monthly, r.tax_monthly, r.insurance_monthly].map((v) => (v === null ? '—' : v.toLocaleString())).join(' / ')}
+                      {[r.cam_monthly, r.tax_monthly, r.insurance_monthly].map((v) => (v === null ? '—' : formatNumber(v))).join(' / ')}
                     </td>
-                    <td className="panel-num">{r.security_deposit?.toLocaleString() ?? '—'}</td>
+                    <td className="panel-num">{r.security_deposit != null ? formatNumber(r.security_deposit) : '—'}</td>
                     <td>
                       <select
                         className={`select${matchedId(i) ? '' : ' import-unmatched'}`}
                         value={matchedId(i) ?? ''}
                         onChange={(e) => setOverrides((o) => ({ ...o, [i]: e.target.value }))}
-                        aria-label={`Lease for ${r.tenant}`}
+                        aria-label={t('leaseFor', { tenant: r.tenant })}
                       >
-                        <option value="">Not matched</option>
+                        <option value="">{t('notMatched')}</option>
                         {leases.map((l) => (
                           <option key={l.id} value={l.id}>
                             {l.title} ({DOC_TYPE_LABELS[l.doc_type]})
@@ -334,20 +329,20 @@ export function Import() {
       )}
 
       <div className="section-header">
-        <h2>Past imports</h2>
+        <h2>{t('pastImports')}</h2>
       </div>
       {imports.length === 0 ? (
-        <p className="muted">Nothing imported yet.</p>
+        <p className="muted">{t('nothingImported')}</p>
       ) : (
         <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
-                <th>File</th>
-                <th>Source</th>
-                <th className="panel-num">Records</th>
-                <th className="panel-num">Matched</th>
-                <th>Imported</th>
+                <th>{t('colFile')}</th>
+                <th>{t('colSource')}</th>
+                <th className="panel-num">{t('colRecords')}</th>
+                <th className="panel-num">{t('colMatched')}</th>
+                <th>{t('colImported')}</th>
                 <th />
               </tr>
             </thead>
@@ -358,12 +353,12 @@ export function Import() {
                   <td>
                     <span className="badge">{SOURCE_LABELS[imp.source]}</span>
                   </td>
-                  <td className="panel-num">{imp.row_count}</td>
-                  <td className="panel-num">{imp.matched_count}</td>
-                  <td className="nowrap">{new Date(imp.created_at).toLocaleString()}</td>
+                  <td className="panel-num">{formatNumber(imp.row_count)}</td>
+                  <td className="panel-num">{formatNumber(imp.matched_count)}</td>
+                  <td className="nowrap">{formatDateTime(imp.created_at)}</td>
                   <td className="actions">
                     <button className="btn btn-ghost btn-sm danger" onClick={() => removeImport(imp)}>
-                      Delete
+                      {tc('delete')}
                     </button>
                   </td>
                 </tr>
@@ -373,7 +368,13 @@ export function Import() {
         </div>
       )}
       <p className="muted small">
-        Matched records appear on each lease's <Link to="/leases" className="link">Details page</Link> under System records.
+        {withNode(
+          t('footer'),
+          'link',
+          <Link to="/leases" className="link">
+            {t('footerLink')}
+          </Link>,
+        )}
       </p>
     </main>
   )

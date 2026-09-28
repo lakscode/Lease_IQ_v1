@@ -1,4 +1,6 @@
 import { supabase } from './supabase'
+import { getLanguageName, translator } from '../i18n'
+import { common } from '../i18n/messages/common'
 import type { DocType } from './leases'
 
 export type ChatSource = { leaseId: string; title: string; docType: DocType; page: number }
@@ -65,10 +67,10 @@ function chatTitle(messages: ChatMessage[]) {
 /** Asks the lease-chat Edge Function; history is every earlier message in the conversation. */
 export async function askLeaseQuestion(history: ChatMessage[], leaseId: string | null, chatId: string | null) {
   const messages = history.filter((m) => !m.error).map(({ role, content }) => ({ role, content }))
-  const { data, error } = await supabase.functions.invoke('lease-chat', { body: { messages, leaseId, chatId } })
+  const { data, error } = await supabase.functions.invoke('lease-chat', { body: { messages, leaseId, chatId, language: getLanguageName() } })
   if (error) {
     if (error.name === 'FunctionsFetchError') {
-      throw new Error('Could not reach the "lease-chat" Edge Function. Make sure it is deployed to your Supabase project.')
+      throw new Error(translator(common).t('functionUnreachable', { name: 'lease-chat' }))
     }
     // FunctionsHttpError carries the function's JSON error body in context.
     const body = await error.context?.json?.().catch(() => null)

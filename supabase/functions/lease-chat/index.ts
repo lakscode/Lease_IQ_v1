@@ -4,9 +4,10 @@
 // function) and reading whole pages. It searches until it can answer, then
 // replies with page citations.
 //
-// POST { messages: [{ role: 'user' | 'assistant', content }], leaseId?, chatId? }
+// POST { messages: [{ role: 'user' | 'assistant', content }], leaseId?, chatId?, language? }
 //   -> { answer, sources: [{ leaseId, title, docType, page }], usage: { input, output } }
 // Each question's token usage is saved to ai_usage (process 'chat', linked to chatId).
+// language is the English name of the app's interface language (see LANGUAGES); answers are written in it.
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
@@ -18,12 +19,24 @@ import { fallbackParams, resolveModel } from '../_shared/model.ts'
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '3'
+const FUNCTION_VERSION = '4'
 const MAX_TOOL_ROUNDS = 8
 const MAX_HISTORY = 20
 const MAX_MESSAGE_CHARS = 8000
 const MAX_PAGES_PER_READ = 6
 const MAX_SOURCES = 10
+
+// Interface languages of the app (src/i18n/index.tsx), with the reply used when there are no documents yet.
+const LANGUAGES: Record<string, string> = {
+  English: 'You have no analyzed lease documents yet. Upload a lease on the Lease Abstraction page first.',
+  German: 'Sie haben noch keine analysierten Mietvertragsdokumente. Laden Sie zuerst einen Mietvertrag auf der Seite Mietvertragsauszug hoch.',
+  Spanish: 'Todavía no tiene documentos de arrendamiento analizados. Suba primero un contrato en la página Resumen de contratos.',
+  Portuguese: 'Você ainda não tem documentos de locação analisados. Envie primeiro um contrato na página Resumo de contratos.',
+  Italian: 'Non hai ancora documenti di locazione analizzati. Carica prima un contratto nella pagina Sintesi contratti.',
+}
+
+const languageInstruction = (language: string) =>
+  `The user's interface language is ${language}. Write your answer in ${language}, even when the lease documents are in another language, unless the user's latest message is clearly written in a different language; then answer in that language. Keep document titles and short quotes of lease wording as written.`
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -116,6 +129,7 @@ Deno.serve(async (req) => {
   const history = parseHistory(body.messages)
   if (!history) return json({ error: 'messages must be a non-empty list ending with a user message' }, 400)
   const focusId = typeof body.leaseId === 'string' ? body.leaseId : null
+  const language = typeof body.language === 'string' && body.language in LANGUAGES ? body.language : 'English'
 
   // Saved chat this question belongs to (row level security: only the caller's own).
   let chat: { id: string; title: string } | null = null
@@ -134,14 +148,14 @@ Deno.serve(async (req) => {
     .order('created_at')
   if (leasesError) return json({ error: leasesError.message }, 500)
   if (!leases.length) {
-    return json({ answer: 'You have no analyzed lease documents yet. Upload a lease on the Lease Abstraction page first.', sources: [] })
+    return json({ answer: LANGUAGES[language], sources: [] })
   }
 
   const catalogue = new Map((leases as CatalogueLease[]).map((l) => [l.id, l]))
   const focus = focusId ? catalogue.get(focusId) : undefined
 
   try {
-    const result = await answer(supabase, catalogue, history, focus, chat)
+    const result = await answer(supabase, catalogue, history, focus, chat, language)
     return json(result)
   } catch (err) {
     console.error(JSON.stringify({ v: FUNCTION_VERSION, step: 'failed', error: err instanceof Error ? err.message : String(err) }))
@@ -185,12 +199,13 @@ async function answer(
   history: ChatTurn[],
   focus: CatalogueLease | undefined,
   chat: { id: string; title: string } | null,
+  language: string,
 ) {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY, baseURL: ANTHROPIC_BASE_URL })
   const model = await resolveModel(supabase)
   const usage = new UsageTally(model)
   try {
-    const result = await runAnswerLoop(client, model, supabase, catalogue, history, focus, usage)
+    const result = await runAnswerLoop(client, model, supabase, catalogue, history, focus, usage, language)
     return { ...result, usage: usage.summary() }
   } finally {
     // Tokens are spent even when the loop fails part-way, so always record them.
@@ -257,6 +272,7 @@ async function runAnswerLoop(
   history: ChatTurn[],
   focus: CatalogueLease | undefined,
   usage: UsageTally,
+  language: string,
 ) {
   const messages: Anthropic.Beta.BetaMessageParam[] = history.map((m, i) =>
     focus && i === history.length - 1
@@ -282,6 +298,8 @@ async function runAnswerLoop(
       system: [
         { type: 'text', text: SYSTEM_PROMPT },
         { type: 'text', text: catalogueText(catalogue), cache_control: { type: 'ephemeral' } },
+        // After the cache breakpoint so switching language keeps the cached catalogue.
+        { type: 'text', text: languageInstruction(language) },
       ],
       // The last round gets no tools, so Claude has to answer with what it found.
       ...(round < MAX_TOOL_ROUNDS ? { tools: TOOLS } : {}),

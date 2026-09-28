@@ -1,5 +1,7 @@
 import { supabase } from './supabase'
 import type { Lease } from './leases'
+import { translator } from '../i18n'
+import { libImports } from '../i18n/messages/libImports'
 
 export type ImportSource = 'yardi' | 'mri' | 'csv'
 
@@ -45,158 +47,131 @@ const common = {
   tenant: ['tenant', 'tenant name', 'lease name', 'occupant', 'occupant name', 'lessee'],
 }
 
-export const IMPORT_FIELDS: ImportField[] = [
+const FIELD_DEFS: Array<Omit<ImportField, 'label' | 'description'>> = [
   {
     key: 'tenant',
-    label: 'Tenant',
     type: 'text',
     required: true,
-    description: 'Tenant or lease name. Used to match the record to a lease in LeaseIQ.',
     aliases: { yardi: ['lease', 'lease name', ...common.tenant], mri: ['occupant name', 'tenant name', 'dba name', ...common.tenant], csv: common.tenant },
     template: { heading: 'Tenant', samples: ['NexGen Solutions', 'Acme Corp'] },
   },
   {
     key: 'external_id',
-    label: 'Lease ID',
     type: 'text',
-    description: 'The lease or tenant code in your system.',
     aliases: { yardi: ['tenant code', 'lease code', 'tcode', ...common.external_id], mri: ['lease id', 'lease number', 'leasid', ...common.external_id], csv: common.external_id },
     template: { heading: 'Lease ID', samples: ['t0001234', 't0005678'] },
   },
   {
     key: 'property',
-    label: 'Property',
     type: 'text',
-    description: 'Property or building code/name.',
     aliases: { yardi: ['property', 'property code', ...common.property], mri: ['bldg id', 'building id', 'bldgid', 'entity id', ...common.property], csv: common.property },
     template: { heading: 'Property', samples: ['650MAPLE', '1200MAIN'] },
   },
   {
     key: 'unit',
-    label: 'Unit / suite',
     type: 'text',
-    description: 'Unit or suite number. Also helps matching.',
     aliases: { yardi: ['unit(s)', 'units', ...common.unit], mri: ['suite id', 'suite', 'suitid', ...common.unit], csv: common.unit },
     template: { heading: 'Unit', samples: ['400', '120'] },
   },
   {
     key: 'status',
-    label: 'Status',
     type: 'text',
-    description: 'Lease status (current, future, past, month-to-month).',
     aliases: { yardi: ['status', 'lease status', 'lease type'], mri: ['status', 'lease status', 'occupancy status'], csv: ['status', 'lease status'] },
     template: { heading: 'Status', samples: ['Current', 'Current'] },
   },
   {
     key: 'lease_start',
-    label: 'Lease start',
     type: 'date',
-    description: 'Lease start / commencement date.',
     aliases: { yardi: ['lease from', 'from', 'lease start', 'start date', 'commencement'], mri: ['lease start', 'occupancy date', 'begin date', 'commencement date', 'rent start'], csv: ['lease start', 'start date', 'commencement date', 'commencement'] },
     template: { heading: 'Lease Start', samples: ['2025-08-01', '2022-01-01'] },
   },
   {
     key: 'lease_end',
-    label: 'Lease end',
     type: 'date',
-    description: 'Lease expiration date as currently in your system.',
     aliases: { yardi: ['lease to', 'to', 'lease end', 'expiration', 'end date'], mri: ['lease stop', 'expiration date', 'stop date', 'lease expiration', 'vacate date'], csv: ['lease end', 'end date', 'expiration date', 'expiration'] },
     template: { heading: 'Lease End', samples: ['2029-07-31', '2026-12-31'] },
   },
   {
     key: 'area_sqft',
-    label: 'Area (sq ft)',
     type: 'number',
-    description: 'Leased area in square feet.',
     aliases: { yardi: ['area', 'sq ft', 'sqft', 'unit area', 'rentable area'], mri: ['suite sq ft', 'sq ft', 'gla', 'rentable sq ft', 'rsf', 'area'], csv: ['area', 'area sq ft', 'sq ft', 'sqft', 'rsf', 'rentable area'] },
     template: { heading: 'Area Sq Ft', samples: ['1800', '3200'] },
   },
   {
     key: 'monthly_base_rent',
-    label: 'Monthly base rent',
     type: 'number',
-    description: 'Current monthly base rent. Give this or the annual base rent.',
     aliases: { yardi: ['monthly rent', 'current rent', 'base rent', 'rent monthly'], mri: ['monthly base rent', 'monthly rent', 'current monthly rent', 'base rent'], csv: ['monthly base rent', 'monthly rent', 'base rent'] },
     template: { heading: 'Monthly Base Rent', samples: ['4500.00', '8000.00'] },
   },
   {
     key: 'annual_base_rent',
-    label: 'Annual base rent',
     type: 'number',
-    description: 'Current annual base rent (converted to monthly when there is no monthly column).',
     aliases: { yardi: ['annual rent', 'annual base rent'], mri: ['annual rent', 'annual base rent', 'annualized rent'], csv: ['annual base rent', 'annual rent'] },
   },
   {
     key: 'cam_monthly',
-    label: 'CAM (monthly)',
     type: 'number',
-    description: 'Monthly CAM / operating expense estimate billed.',
     aliases: { yardi: ['cam', 'cam monthly', 'opex', 'recoveries'], mri: ['cam', 'cam monthly', 'opex', 'operating expenses', 'recoveries'], csv: ['cam monthly', 'cam', 'opex monthly'] },
     template: { heading: 'CAM Monthly', samples: ['600.00', '1100.00'] },
   },
   {
     key: 'tax_monthly',
-    label: 'Tax (monthly)',
     type: 'number',
-    description: 'Monthly real estate tax recovery billed.',
     aliases: { yardi: ['tax', 'ret', 'real estate tax'], mri: ['ret', 'tax', 'real estate tax'], csv: ['tax monthly', 'tax', 'real estate tax'] },
     template: { heading: 'Tax Monthly', samples: ['250.00', '400.00'] },
   },
   {
     key: 'insurance_monthly',
-    label: 'Insurance (monthly)',
     type: 'number',
-    description: 'Monthly insurance recovery billed.',
     aliases: { yardi: ['insurance', 'ins'], mri: ['ins', 'insurance'], csv: ['insurance monthly', 'insurance'] },
     template: { heading: 'Insurance Monthly', samples: ['90.00', '150.00'] },
   },
   {
     key: 'other_monthly',
-    label: 'Other charges (monthly)',
     type: 'number',
-    description: 'Any other recurring monthly charges (parking, storage, utilities).',
     aliases: { yardi: ['other', 'misc', 'other charges'], mri: ['other', 'misc', 'other charges'], csv: ['other monthly', 'other charges'] },
     template: { heading: 'Other Monthly', samples: ['0.00', '75.00'] },
   },
   {
     key: 'security_deposit',
-    label: 'Security deposit',
     type: 'number',
-    description: 'Security deposit held.',
     aliases: { yardi: ['security deposit', 'security deposit received', 'deposit', 'sec dep'], mri: ['security deposit', 'deposit', 'sec dep', 'deposit amount'], csv: ['security deposit', 'deposit'] },
     template: { heading: 'Security Deposit', samples: ['9000.00', '16000.00'] },
   },
   {
     key: 'next_escalation_date',
-    label: 'Next increase date',
     type: 'date',
-    description: 'Date of the next scheduled rent increase in your system.',
     aliases: { yardi: ['next increase date', 'future rent date', 'step date'], mri: ['next step date', 'next increase date', 'future rent date'], csv: ['next increase date', 'next escalation date'] },
     template: { heading: 'Next Increase Date', samples: ['2026-08-01', '2025-01-01'] },
   },
   {
     key: 'next_escalation_rent',
-    label: 'Next monthly rent',
     type: 'number',
-    description: 'Monthly base rent after the next increase.',
     aliases: { yardi: ['future rent', 'next rent', 'future monthly rent'], mri: ['next step amount', 'future rent', 'next monthly rent'], csv: ['next monthly rent', 'next rent'] },
     template: { heading: 'Next Monthly Rent', samples: ['4635.00', '8240.00'] },
   },
   {
     key: 'charge_code',
-    label: 'Charge code',
     type: 'text',
-    description: 'Only for reports that list each charge on its own row (e.g. rnt, cam, tax, ins).',
     aliases: { yardi: ['charge code', 'charge', 'chg code'], mri: ['income category', 'inccat', 'charge code'], csv: ['charge code'] },
   },
   {
     key: 'charge_amount',
-    label: 'Charge amount (monthly)',
     type: 'number',
-    description: 'Monthly amount of the charge on that row.',
     aliases: { yardi: ['amount', 'charge amount', 'monthly amount'], mri: ['amount', 'monthly amount', 'charge amount'], csv: ['charge amount'] },
   },
 ]
+
+// Label and description are looked up in the current language each time they are read.
+export const IMPORT_FIELDS: ImportField[] = FIELD_DEFS.map((f) => ({
+  ...f,
+  get label() {
+    return translator(libImports).t(`label_${f.key}`)
+  },
+  get description() {
+    return translator(libImports).t(`desc_${f.key}`)
+  },
+}))
 
 export const SOURCE_LABELS: Record<ImportSource, string> = { yardi: 'Yardi', mri: 'MRI', csv: 'CSV' }
 
@@ -269,6 +244,8 @@ export type ColumnMap = Partial<Record<FieldKey, number>>
  * 15 rows, since system reports often start with titles) and maps each field
  * to a column by the source's aliases.
  */
+const englishLabel = (key: FieldKey) => translator(libImports, 'en').t(`label_${key}`)
+
 export function detectColumns(rows: string[][], source: ImportSource): { headerRow: number; map: ColumnMap } {
   const tenantAliases = new Set([...IMPORT_FIELDS[0].aliases[source], ...IMPORT_FIELDS[0].aliases.csv].map(norm))
   let headerRow = rows.slice(0, 15).findIndex((r) => r.some((c) => tenantAliases.has(norm(c))))
@@ -277,7 +254,8 @@ export function detectColumns(rows: string[][], source: ImportSource): { headerR
   const map: ColumnMap = {}
   const used = new Set<number>()
   for (const field of IMPORT_FIELDS) {
-    const aliases = [...field.aliases[source], ...field.aliases.csv, field.template?.heading ?? '', field.label].filter(Boolean).map(norm)
+    // The English label is also accepted as a column heading (whatever the app language).
+    const aliases = [...field.aliases[source], ...field.aliases.csv, field.template?.heading ?? '', englishLabel(field.key)].filter(Boolean).map(norm)
     const index = headers.findIndex((h, i) => !used.has(i) && aliases.includes(h))
     if (index >= 0) {
       map[field.key] = index
@@ -471,7 +449,7 @@ export async function saveImport(
     const { error: rowsError } = await supabase.from('system_leases').insert(batch)
     if (rowsError) {
       await supabase.from('data_imports').delete().eq('id', imp.id)
-      throw new Error(`Saving rows failed: ${rowsError.message}`)
+      throw new Error(translator(libImports).t('err_save_rows', { detail: rowsError.message }))
     }
   }
   return imp as DataImport

@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useT } from '../i18n'
+import { auth } from '../i18n/messages/auth'
 
 export function ForgotPassword() {
+  const { t } = useT(auth)
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -24,30 +27,30 @@ export function ForgotPassword() {
   return (
     <main className="center">
       <form className="card auth-card" onSubmit={handleSubmit}>
-        <h2>Reset your password</h2>
+        <h2>{t('resetTitle')}</h2>
 
         {sent ? (
           <p className="success">
-            If an account exists for {email}, a password reset link is on its way. Check your inbox.
+            {t('resetSent', { email })}
           </p>
         ) : (
           <>
-            <p className="muted">Enter your email and we will send you a link to reset your password.</p>
+            <p className="muted">{t('resetIntro')}</p>
             <label>
-              Email
+              {t('email')}
               <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
             </label>
 
             {error && <p className="error">{error}</p>}
 
             <button className="btn" type="submit" disabled={loading}>
-              {loading ? 'Sending…' : 'Send reset link'}
+              {loading ? t('sending') : t('sendResetLink')}
             </button>
           </>
         )}
 
         <p className="muted">
-          <Link to="/login" className="link">Back to log in</Link>
+          <Link to="/login" className="link">{t('backToLogin')}</Link>
         </p>
       </form>
     </main>

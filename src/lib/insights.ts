@@ -1,39 +1,72 @@
 import { supabase } from './supabase'
+import { getLanguageName, localizedRecord, translator } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { libInsights } from '../i18n/messages/libInsights'
 import type { CamTerms } from './cam'
 
 export type InsightGroup = 'revenue' | 'risk'
 export type InsightStatus = 'action' | 'watch' | 'none' | 'needs_data'
 
+type InsightCategoryKey =
+  | 'rent_escalation'
+  | 'cpi_escalation'
+  | 'renewal_opportunity'
+  | 'market_rent_comparison'
+  | 'under_billing'
+  | 'missing_cam_recovery'
+  | 'expired_concessions'
+  | 'security_deposit_changes'
+  | 'additional_rent'
+  | 'percentage_rent'
+  | 'renewal_notice_deadline'
+  | 'termination_option'
+  | 'co_tenancy'
+  | 'exclusivity'
+  | 'rent_free_ending'
+  | 'insurance_expiry'
+  | 'guarantee_expiry'
+  | 'obligations'
+  | 'cam_cap_violation'
+  | 'amendment_not_reflected'
+
+// Label is looked up in the current language each time it is read.
+const category = (key: InsightCategoryKey, group: InsightGroup) => ({
+  key: key as string,
+  get label() {
+    return translator(libInsights).t(`cat_${key}`)
+  },
+  group,
+})
+
 // Keep keys in sync with CATEGORIES in supabase/functions/lease-insights/index.ts.
 export const INSIGHT_CATEGORIES: Array<{ key: string; label: string; group: InsightGroup }> = [
-  { key: 'rent_escalation', label: 'Upcoming rent escalation', group: 'revenue' },
-  { key: 'cpi_escalation', label: 'CPI escalation', group: 'revenue' },
-  { key: 'renewal_opportunity', label: 'Renewal opportunity', group: 'revenue' },
-  { key: 'market_rent_comparison', label: 'Market-rent comparison', group: 'revenue' },
-  { key: 'under_billing', label: 'Under-billing', group: 'revenue' },
-  { key: 'missing_cam_recovery', label: 'Missing CAM recovery', group: 'revenue' },
-  { key: 'expired_concessions', label: 'Expired concessions', group: 'revenue' },
-  { key: 'security_deposit_changes', label: 'Security deposit changes', group: 'revenue' },
-  { key: 'additional_rent', label: 'Additional rent', group: 'revenue' },
-  { key: 'percentage_rent', label: 'Percentage rent', group: 'revenue' },
-  { key: 'renewal_notice_deadline', label: 'Renewal notice deadline', group: 'risk' },
-  { key: 'termination_option', label: 'Termination/break option', group: 'risk' },
-  { key: 'co_tenancy', label: 'Co-tenancy trigger', group: 'risk' },
-  { key: 'exclusivity', label: 'Exclusivity violation', group: 'risk' },
-  { key: 'rent_free_ending', label: 'Rent-free period ending', group: 'risk' },
-  { key: 'insurance_expiry', label: 'Insurance expiry', group: 'risk' },
-  { key: 'guarantee_expiry', label: 'Guarantee expiry', group: 'risk' },
-  { key: 'obligations', label: 'Required landlord/tenant obligations', group: 'risk' },
-  { key: 'cam_cap_violation', label: 'CAM cap violation', group: 'risk' },
-  { key: 'amendment_not_reflected', label: 'Lease amendment not reflected in system', group: 'risk' },
+  category('rent_escalation', 'revenue'),
+  category('cpi_escalation', 'revenue'),
+  category('renewal_opportunity', 'revenue'),
+  category('market_rent_comparison', 'revenue'),
+  category('under_billing', 'revenue'),
+  category('missing_cam_recovery', 'revenue'),
+  category('expired_concessions', 'revenue'),
+  category('security_deposit_changes', 'revenue'),
+  category('additional_rent', 'revenue'),
+  category('percentage_rent', 'revenue'),
+  category('renewal_notice_deadline', 'risk'),
+  category('termination_option', 'risk'),
+  category('co_tenancy', 'risk'),
+  category('exclusivity', 'risk'),
+  category('rent_free_ending', 'risk'),
+  category('insurance_expiry', 'risk'),
+  category('guarantee_expiry', 'risk'),
+  category('obligations', 'risk'),
+  category('cam_cap_violation', 'risk'),
+  category('amendment_not_reflected', 'risk'),
 ]
 
-export const INSIGHT_STATUS_LABELS: Record<InsightStatus, string> = {
-  action: 'Action',
-  watch: 'Watch',
-  needs_data: 'Needs data',
-  none: 'Not in lease',
-}
+const INSIGHT_STATUSES: InsightStatus[] = ['action', 'watch', 'needs_data', 'none']
+
+export const INSIGHT_STATUS_LABELS: Record<InsightStatus, string> = localizedRecord(INSIGHT_STATUSES, (k) =>
+  translator(libInsights).t(`status_${k}`),
+)
 
 export type Insight = {
   category: string
@@ -70,10 +103,10 @@ export async function fetchInsights(familyId: string): Promise<LeaseInsights | n
 
 /** Starts generation in the lease-insights Edge Function; poll fetchInsights for the result. */
 export async function requestInsights(leaseId: string) {
-  const { error } = await supabase.functions.invoke('lease-insights', { body: { leaseId } })
+  const { error } = await supabase.functions.invoke('lease-insights', { body: { leaseId, language: getLanguageName() } })
   if (error) {
     if (error.name === 'FunctionsFetchError') {
-      throw new Error('Could not reach the "lease-insights" Edge Function. Make sure it is deployed to your Supabase project.')
+      throw new Error(translator(common).t('functionUnreachable', { name: 'lease-insights' }))
     }
     const body = await error.context?.json?.().catch(() => null)
     throw new Error(body?.error ?? error.message)

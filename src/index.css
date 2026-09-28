@@ -46,6 +46,12 @@ h1, h2, h3, h4 { letter-spacing: -0.015em; }
 .nav .btn:hover { background: #e5e5e5; }
 .nav .btn-ghost { background: transparent; color: #fff; border-color: rgba(255, 255, 255, 0.5); box-shadow: none; }
 .nav .btn-ghost:hover { background: rgba(255, 255, 255, 0.15); }
+.nav-lang {
+  background: transparent; color: #fff; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px;
+  padding: 0.3rem 0.4rem; font: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.nav-lang:focus { outline: none; border-color: #fff; }
+.nav-lang option { color: #000; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;

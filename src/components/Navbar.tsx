@@ -1,10 +1,14 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/AuthProvider'
 import { supabase } from '../lib/supabase'
+import { LOCALES, useLocale, useT, type Locale } from '../i18n'
+import { common } from '../i18n/messages/common'
 
 export function Navbar() {
   const { session, isSuperAdmin } = useAuth()
   const navigate = useNavigate()
+  const { t } = useT(common)
+  const { locale, setLocale } = useLocale()
 
   const signOut = async () => {
     await supabase.auth.signOut()
@@ -17,20 +21,32 @@ export function Navbar() {
       <div className="nav-links">
         {session ? (
           <>
-            <Link to="/dashboard">Dashboard</Link>
-            <Link to="/leases">Lease Abstraction</Link>
-            <Link to="/chat">Lease Assistant</Link>
-            <Link to="/import">Import</Link>
+            <Link to="/dashboard">{t('navDashboard')}</Link>
+            <Link to="/leases">{t('navLeases')}</Link>
+            <Link to="/chat">{t('navChat')}</Link>
+            <Link to="/import">{t('navImport')}</Link>
             {isSuperAdmin && (
               <>
-                <Link to="/settings">Settings</Link>
-                <span className="badge nav-role" title="You are signed in as a super admin">Super admin</span>
+                <Link to="/settings">{t('navSettings')}</Link>
+                <span className="badge nav-role" title={t('superAdminTitle')}>{t('superAdmin')}</span>
               </>
             )}
-            <button className="btn btn-ghost" onClick={signOut}>Sign out</button>
           </>
+        ) : null}
+        <select
+          className="nav-lang"
+          aria-label={t('language')}
+          value={locale}
+          onChange={(e) => setLocale(e.target.value as Locale)}
+        >
+          {LOCALES.map((l) => (
+            <option key={l.code} value={l.code}>{l.name}</option>
+          ))}
+        </select>
+        {session ? (
+          <button className="btn btn-ghost" onClick={signOut}>{t('signOut')}</button>
         ) : (
-          <Link to="/login" className="btn">Log in</Link>
+          <Link to="/login" className="btn">{t('logIn')}</Link>
         )}
       </div>
     </nav>

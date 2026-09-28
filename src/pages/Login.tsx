@@ -2,9 +2,14 @@ import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthProvider'
+import { useT } from '../i18n'
+import { auth } from '../i18n/messages/auth'
+import { common } from '../i18n/messages/common'
 
 export function Login() {
   const { session } = useAuth()
+  const { t } = useT(auth)
+  const { t: tc } = useT(common)
   const navigate = useNavigate()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
@@ -28,7 +33,7 @@ export function Login() {
     } else {
       const { data, error } = await supabase.auth.signUp({ email, password })
       if (error) setError(error.message)
-      else if (!data.session) setMessage('Check your email to confirm your account, then log in.')
+      else if (!data.session) setMessage(t('confirmEmail'))
       else navigate('/dashboard')
     }
     setLoading(false)
@@ -43,14 +48,14 @@ export function Login() {
   return (
     <main className="center">
       <form className="card auth-card" onSubmit={handleSubmit}>
-        <h2>{mode === 'login' ? 'Welcome back' : 'Create an account'}</h2>
+        <h2>{mode === 'login' ? t('welcomeBack') : t('createAccount')}</h2>
 
         <label>
-          Email
+          {t('email')}
           <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
         <label>
-          Password
+          {t('password')}
           <input
             type="password"
             required
@@ -61,20 +66,20 @@ export function Login() {
         </label>
 
         {mode === 'login' && (
-          <Link to="/forgot-password" className="link forgot-link">Forgot password?</Link>
+          <Link to="/forgot-password" className="link forgot-link">{t('forgotPassword')}</Link>
         )}
 
         {error && <p className="error">{error}</p>}
         {message && <p className="success">{message}</p>}
 
         <button className="btn" type="submit" disabled={loading}>
-          {loading ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Sign up'}
+          {loading ? tc('pleaseWait') : mode === 'login' ? tc('logIn') : t('signUp')}
         </button>
 
         <p className="muted">
-          {mode === 'login' ? 'No account yet? ' : 'Already have an account? '}
+          {mode === 'login' ? t('noAccount') : t('haveAccount')}{' '}
           <button type="button" className="link" onClick={toggleMode}>
-            {mode === 'login' ? 'Sign up' : 'Log in'}
+            {mode === 'login' ? t('signUp') : tc('logIn')}
           </button>
         </p>
       </form>

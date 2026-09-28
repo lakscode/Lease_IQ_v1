@@ -4,6 +4,9 @@ import { useAuth } from '../lib/AuthProvider'
 import { supabase } from '../lib/supabase'
 import type { Lease } from '../lib/leases'
 import { daysFromToday, leaseTerms } from '../lib/leaseStatus'
+import { formatDate, formatNumber, useT } from '../i18n'
+import { dashboard } from '../i18n/messages/dashboard'
+import { common } from '../i18n/messages/common'
 
 type Tile = [label: string, value: number | undefined, hint?: string, tone?: string]
 
@@ -23,6 +26,8 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
 
 export function Dashboard() {
   const { session } = useAuth()
+  const { t, tp } = useT(dashboard)
+  const { t: tc } = useT(common)
   const [files, setFiles] = useState<Array<{ is_scanned: boolean }> | null>(null)
   const [leases, setLeases] = useState<Lease[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -40,79 +45,79 @@ export function Dashboard() {
 
   const terms = useMemo(() => (leases ? leaseTerms(leases) : null), [leases])
   const expiringSoon = useMemo(
-    () => terms?.filter((t) => t.expiringSoon).sort((a, b) => a.expiration!.getTime() - b.expiration!.getTime()) ?? [],
+    () => terms?.filter((x) => x.expiringSoon).sort((a, b) => a.expiration!.getTime() - b.expiration!.getTime()) ?? [],
     [terms],
   )
 
   const count = (type: Lease['doc_type']) => leases?.filter((l) => l.doc_type === type).length
-  const unknown = terms?.filter((t) => t.status === 'unknown').length ?? 0
+  const unknown = terms?.filter((x) => x.status === 'unknown').length ?? 0
 
   const statusTiles: Tile[] = [
-    ['Active leases', terms?.filter((t) => t.status === 'active').length, 'Expiration date is today or later', 'active'],
-    ['Renewed leases', terms?.filter((t) => t.renewed).length, 'Extended by an amendment or extension', 'renewed'],
-    ['Expired leases', terms?.filter((t) => t.status === 'expired').length, 'Expiration date has passed', 'expired'],
-    ['Expiring in 12 months', terms ? expiringSoon.length : undefined, 'Active leases ending within a year', 'soon'],
+    [t('activeLeases'), terms?.filter((x) => x.status === 'active').length, t('activeHint'), 'active'],
+    [t('renewedLeases'), terms?.filter((x) => x.renewed).length, t('renewedHint'), 'renewed'],
+    [t('expiredLeases'), terms?.filter((x) => x.status === 'expired').length, t('expiredHint'), 'expired'],
+    [t('expiring12'), terms ? expiringSoon.length : undefined, t('expiring12Hint'), 'soon'],
   ]
 
   const documentTiles: Tile[] = [
-    ['Files uploaded', files?.length, files ? `${files.filter((f) => f.is_scanned).length} scanned (OCR)` : undefined],
-    ['Lease documents', leases?.length, 'All documents found in uploads'],
-    ['Main leases', count('main_lease')],
-    ['Amendments', count('amendment')],
-    ['Addenda', count('addendum')],
-    ['Commencement letters', count('commencement_letter')],
-    ['Other documents', count('other'), 'Assignments, guaranties, SNDAs…'],
+    [t('filesUploaded'), files?.length, files ? t('scannedHint', { count: formatNumber(files.filter((f) => f.is_scanned).length) }) : undefined],
+    [t('leaseDocuments'), leases?.length, t('leaseDocumentsHint')],
+    [t('mainLeases'), count('main_lease')],
+    [t('amendments'), count('amendment')],
+    [t('addenda'), count('addendum')],
+    [t('commencementLetters'), count('commencement_letter')],
+    [t('otherDocuments'), count('other'), t('otherHint')],
   ]
 
   return (
     <main className="container wide">
       <div className="page-header">
         <div>
-          <h1>Dashboard</h1>
-          <p className="muted">Signed in as {session?.user.email}</p>
+          <h1>{t('title')}</h1>
+          <p className="muted">{t('signedInAs', { email: session?.user.email ?? '' })}</p>
         </div>
-        <Link to="/leases" className="btn">Lease Abstraction →</Link>
+        <Link to="/leases" className="btn">{t('leaseAbstractionLink')}</Link>
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      <h2 className="section-title">Lease status</h2>
+      <h2 className="section-title">{t('leaseStatus')}</h2>
       <Tiles tiles={statusTiles} />
       {unknown > 0 && (
         <p className="muted small">
-          {unknown} main lease{unknown === 1 ? '' : 's'} with no expiration date found {unknown === 1 ? 'is' : 'are'} not counted as active or expired.
+          {tp('unknownNote', unknown)}
         </p>
       )}
 
-      <h2 className="section-title">Expiring in the next 12 months</h2>
+      <h2 className="section-title">{t('expiringNext12')}</h2>
       {!terms ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{tc('loading')}</p>
       ) : expiringSoon.length === 0 ? (
-        <p className="muted">No active leases expire in the next 12 months.</p>
+        <p className="muted">{t('noneExpiring')}</p>
       ) : (
         <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
-                <th>Lease</th>
-                <th>Tenant</th>
-                <th>Premises</th>
-                <th>Expires</th>
-                <th>Days left</th>
+                <th>{t('colLease')}</th>
+                <th>{t('colTenant')}</th>
+                <th>{t('colPremises')}</th>
+                <th>{t('colExpires')}</th>
+                <th>{t('colDaysLeft')}</th>
               </tr>
             </thead>
             <tbody>
-              {expiringSoon.map((t) => {
-                const days = daysFromToday(t.expiration!)
+              {expiringSoon.map((term) => {
+                const days = daysFromToday(term.expiration!)
                 return (
-                  <tr key={t.main.id}>
+                  <tr key={term.main.id}>
                     <td>
-                      <Link to={`/leases/${t.main.id}`} className="doc-title panel-link">{t.main.title}</Link>
-                      {t.renewed && <span className="badge badge-success badge-inline">Renewed</span>}
+                      <Link to={`/leases/${term.main.id}`} className="doc-title panel-link">{term.main.title}</Link>
+                      {term.renewed && <span className="badge badge-success badge-inline">{t('renewed')}</span>}
                     </td>
-                    <td>{t.main.tenant ?? '—'}</td>
-                    <td>{t.main.premises ?? '—'}</td>
-                    <td className="nowrap">{t.expiration!.toLocaleDateString()}</td>
+                    <td>{term.main.tenant ?? '—'}</td>
+                    <td>{term.main.premises ?? '—'}</td>
+                    <td className="nowrap">{formatDate(term.expiration!)}</td>
                     <td className={`nowrap${days <= 90 ? ' error' : ''}`}>{days}</td>
                   </tr>
                 )
@@ -122,7 +127,7 @@ export function Dashboard() {
         </div>
       )}
 
-      <h2 className="section-title">Documents</h2>
+      <h2 className="section-title">{t('documents')}</h2>
       <Tiles tiles={documentTiles} />
     </main>
   )

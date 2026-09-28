@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchFileLogs, type LeaseFile, type LeaseFileLog } from '../lib/leases'
+import { formatTime as formatLocaleTime, useT } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { logViewer } from '../i18n/messages/logViewer'
 
 const REFRESH_MS = 3000
 
 const formatTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString(undefined, { hour12: false, fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)
+  formatLocaleTime(iso, { hour12: false, fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions)
 
 const toText = (logs: LeaseFileLog[]) =>
   logs
@@ -16,6 +19,8 @@ const toText = (logs: LeaseFileLog[]) =>
 
 /** Modal with the step-by-step processing log of one uploaded file. */
 export function LogViewer({ file, live, onClose }: { file: LeaseFile; live: boolean; onClose: () => void }) {
+  const { t } = useT(logViewer)
+  const { t: tc } = useT(common)
   const [logs, setLogs] = useState<LeaseFileLog[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -46,7 +51,7 @@ export function LogViewer({ file, live, onClose }: { file: LeaseFile; live: bool
 
   const copy = async () => {
     if (!logs) return
-    await navigator.clipboard.writeText(`File: ${file.file_name} (${file.id})\nStatus: ${file.status}\n\n${toText(logs)}`)
+    await navigator.clipboard.writeText(`${t('clipboardHeader', { name: file.file_name, id: file.id, status: file.status })}\n\n${toText(logs)}`)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
@@ -61,43 +66,43 @@ export function LogViewer({ file, live, onClose }: { file: LeaseFile; live: bool
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal card" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`Log for ${file.file_name}`}>
+      <div className="modal card" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('ariaLabel', { name: file.file_name })}>
         <div className="modal-header">
           <div>
-            <h3>Processing log</h3>
+            <h3>{t('title')}</h3>
             <div className="muted small">
               {file.file_name}
-              {live && ' · refreshing live'}
+              {live && ` · ${t('refreshingLive')}`}
             </div>
           </div>
           <div className="actions">
             <button className="btn btn-ghost btn-sm" onClick={copy} disabled={!logs?.length}>
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? t('copied') : t('copy')}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+            <button className="btn btn-ghost btn-sm" onClick={onClose}>{tc('close')}</button>
           </div>
         </div>
         <div className="modal-body">
           {error && (
             <p className="error">
               {error}
-              {error.includes('lease_file_logs') && ' (apply the lease_file_logs migration to enable saved logs)'}
+              {error.includes('lease_file_logs') && ` ${t('migrationHint')}`}
             </p>
           )}
-          {!logs && !error && <p className="muted">Loading log…</p>}
-          {logs?.length === 0 && <p className="muted">No log entries yet.</p>}
+          {!logs && !error && <p className="muted">{t('loadingLog')}</p>}
+          {logs?.length === 0 && <p className="muted">{t('noEntries')}</p>}
           {logs && logs.length > 0 && (
             <ol className="log-list">
               {logs.map((l) => (
                 <li key={l.id} className={`log-entry log-${l.level}`}>
                   <span className="log-time">{formatTime(l.created_at)}</span>
-                  <span className={`log-source log-source-${l.source}`}>{l.source === 'function' ? 'server' : 'browser'}</span>
+                  <span className={`log-source log-source-${l.source}`}>{l.source === 'function' ? t('sourceServer') : t('sourceBrowser')}</span>
                   <span className="log-step">{l.step}</span>
                   <span className="log-message">
                     {l.message}
                     {l.data && (
                       <button className="link log-data-toggle" onClick={() => toggleData(l.id)}>
-                        {openData.has(l.id) ? 'hide details' : 'details'}
+                        {openData.has(l.id) ? t('hideDetails') : t('details')}
                       </button>
                     )}
                     {l.data && openData.has(l.id) && <pre className="log-data">{JSON.stringify(l.data, null, 2)}</pre>}

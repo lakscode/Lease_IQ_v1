@@ -1,4 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useT } from '../i18n'
+import { common } from '../i18n/messages/common'
 
 type ConfirmOptions = {
   title: string
@@ -32,7 +34,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   )
   const alert = useCallback(
     ({ okLabel, ...options }: AlertOptions) =>
-      new Promise<void>((resolve) => setDialog({ ...options, confirmLabel: okLabel ?? 'OK', kind: 'alert', resolve: () => resolve() })),
+      new Promise<void>((resolve) => setDialog({ ...options, confirmLabel: okLabel, kind: 'alert', resolve: () => resolve() })),
     [],
   )
 
@@ -54,6 +56,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
 function DialogView({ dialog, onClose }: { dialog: OpenDialog; onClose: (ok: boolean) => void }) {
   const confirmRef = useRef<HTMLButtonElement>(null)
+  const { t } = useT(common)
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
@@ -81,11 +84,11 @@ function DialogView({ dialog, onClose }: { dialog: OpenDialog; onClose: (ok: boo
         <div className="dialog-actions">
           {dialog.kind === 'confirm' && (
             <button className="btn btn-ghost" onClick={() => onClose(false)}>
-              {dialog.cancelLabel ?? 'Cancel'}
+              {dialog.cancelLabel ?? t('cancel')}
             </button>
           )}
           <button ref={confirmRef} className={`btn${dialog.danger ? ' btn-danger' : ''}`} onClick={() => onClose(true)}>
-            {dialog.confirmLabel ?? 'Confirm'}
+            {dialog.confirmLabel ?? t(dialog.kind === 'alert' ? 'ok' : 'confirm')}
           </button>
         </div>
       </div>

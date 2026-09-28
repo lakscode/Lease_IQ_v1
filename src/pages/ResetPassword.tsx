@@ -2,26 +2,31 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthProvider'
+import { useT } from '../i18n'
+import { auth } from '../i18n/messages/auth'
+import { common } from '../i18n/messages/common'
 
 // The link in the reset email signs the user in with a recovery session,
 // which lets them set a new password here.
 export function ResetPassword() {
   const { session, loading: authLoading } = useAuth()
   const navigate = useNavigate()
+  const { t } = useT(auth)
+  const { t: tc } = useT(common)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  if (authLoading) return <div className="center">Loading…</div>
+  if (authLoading) return <div className="center">{tc('loading')}</div>
 
   if (!session) {
     return (
       <main className="center">
         <div className="card auth-card">
-          <h2>Link invalid or expired</h2>
-          <p className="muted">This password reset link is no longer valid. Request a new one.</p>
-          <Link to="/forgot-password" className="btn">Request new link</Link>
+          <h2>{t('linkInvalidTitle')}</h2>
+          <p className="muted">{t('linkInvalidText')}</p>
+          <Link to="/forgot-password" className="btn">{t('requestNewLink')}</Link>
         </div>
       </main>
     )
@@ -30,7 +35,7 @@ export function ResetPassword() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (password !== confirm) {
-      setError('Passwords do not match.')
+      setError(t('passwordsMismatch'))
       return
     }
     setLoading(true)
@@ -45,10 +50,10 @@ export function ResetPassword() {
   return (
     <main className="center">
       <form className="card auth-card" onSubmit={handleSubmit}>
-        <h2>Choose a new password</h2>
+        <h2>{t('chooseNewPassword')}</h2>
 
         <label>
-          New password
+          {t('newPassword')}
           <input
             type="password"
             required
@@ -58,7 +63,7 @@ export function ResetPassword() {
           />
         </label>
         <label>
-          Confirm password
+          {t('confirmPassword')}
           <input
             type="password"
             required
@@ -71,7 +76,7 @@ export function ResetPassword() {
         {error && <p className="error">{error}</p>}
 
         <button className="btn" type="submit" disabled={loading}>
-          {loading ? 'Saving…' : 'Update password'}
+          {loading ? tc('saving') : t('updatePassword')}
         </button>
       </form>
     </main>

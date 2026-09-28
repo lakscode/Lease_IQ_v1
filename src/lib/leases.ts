@@ -1,6 +1,9 @@
 import { supabase } from './supabase'
 import type { ExtractedPage } from './pdf'
 import { errorData, FileLogger, type LogLevel } from './logger'
+import { formatNumber, localizedRecord, translator, type Vars } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { libLeases } from '../i18n/messages/libLeases'
 
 export const BUCKET = 'lease-files'
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -56,61 +59,68 @@ export type EditableField = {
   kind?: 'date' | 'long'
 }
 
+type LeaseMessageKey = keyof (typeof libLeases)['en']
+const lt = (key: LeaseMessageKey, vars?: Vars) => translator(libLeases).t(key, vars)
+
+/** An editable field whose label is looked up in the current language when read. */
+function field(key: EditableField['key'], labelKey: LeaseMessageKey, kind?: EditableField['kind']): EditableField {
+  const f: EditableField = {
+    key,
+    get label() {
+      return lt(labelKey)
+    },
+  }
+  if (kind) f.kind = kind
+  return f
+}
+
+function section(titleKey: LeaseMessageKey, fields: EditableField[]) {
+  return {
+    get title() {
+      return lt(titleKey)
+    },
+    fields,
+  }
+}
+
 export const EDITABLE_SECTIONS: Array<{ title: string; fields: EditableField[] }> = [
-  {
-    title: 'Document',
-    fields: [
-      { key: 'title', label: 'Title' },
-      { key: 'summary', label: 'Summary', kind: 'long' },
-    ],
-  },
-  {
-    title: 'Property',
-    fields: [
-      { key: 'premises', label: 'Premises' },
-      { key: 'abstract.rentable_area', label: 'Rentable area' },
-      { key: 'abstract.permitted_use', label: 'Permitted use', kind: 'long' },
-      { key: 'landlord', label: 'Landlord' },
-      { key: 'tenant', label: 'Tenant' },
-    ],
-  },
-  {
-    title: 'Rent',
-    fields: [
-      { key: 'abstract.base_rent', label: 'Base rent', kind: 'long' },
-      { key: 'abstract.rent_escalations', label: 'Escalations', kind: 'long' },
-      { key: 'abstract.security_deposit', label: 'Security deposit' },
-      { key: 'abstract.operating_expenses', label: 'Operating expenses', kind: 'long' },
-    ],
-  },
-  {
-    title: 'Lease dates',
-    fields: [
-      { key: 'effective_date', label: 'Effective', kind: 'date' },
-      { key: 'abstract.commencement_date', label: 'Commencement' },
-      { key: 'abstract.expiration_date', label: 'Expiration' },
-      { key: 'abstract.term', label: 'Term' },
-      { key: 'abstract.renewal_notification_window_start', label: 'Notification Window Start Date' },
-      { key: 'abstract.renewal_options_start', label: 'Renewal Options Start Date' },
-    ],
-  },
-  {
-    title: 'Options',
-    fields: [
-      { key: 'abstract.renewal_options', label: 'Renewal', kind: 'long' },
-      { key: 'abstract.termination_options', label: 'Termination', kind: 'long' },
-      { key: 'abstract.changes_made', label: 'Changes made', kind: 'long' },
-    ],
-  },
+  section('section_document', [field('title', 'field_title'), field('summary', 'field_summary', 'long')]),
+  section('section_property', [
+    field('premises', 'field_premises'),
+    field('abstract.rentable_area', 'field_rentable_area'),
+    field('abstract.permitted_use', 'field_permitted_use', 'long'),
+    field('landlord', 'field_landlord'),
+    field('tenant', 'field_tenant'),
+  ]),
+  section('section_rent', [
+    field('abstract.base_rent', 'field_base_rent', 'long'),
+    field('abstract.rent_escalations', 'field_escalations', 'long'),
+    field('abstract.security_deposit', 'field_security_deposit'),
+    field('abstract.operating_expenses', 'field_operating_expenses', 'long'),
+  ]),
+  section('section_dates', [
+    field('effective_date', 'field_effective', 'date'),
+    field('abstract.commencement_date', 'field_commencement'),
+    field('abstract.expiration_date', 'field_expiration'),
+    field('abstract.term', 'field_term'),
+    field('abstract.renewal_notification_window_start', 'field_notification_window_start'),
+    field('abstract.renewal_options_start', 'field_renewal_options_start'),
+  ]),
+  section('section_options', [
+    field('abstract.renewal_options', 'field_renewal', 'long'),
+    field('abstract.termination_options', 'field_termination', 'long'),
+    field('abstract.changes_made', 'field_changes_made', 'long'),
+  ]),
 ]
 
-const FIELD_LABELS: Record<string, string> = {
-  doc_type: 'Document type',
-  ...Object.fromEntries(EDITABLE_SECTIONS.flatMap((s) => s.fields.map((f) => [f.key, f.label]))),
+function editableLabel(key: string): string | undefined {
+  if (key === 'doc_type') return lt('field_doc_type')
+  for (const s of EDITABLE_SECTIONS) for (const f of s.fields) if (f.key === key) return f.label
+  return undefined
 }
 
 export const fieldLabel = (field: string) =>
-  FIELD_LABELS[field] ?? (field.startsWith('abstract.') ? ABSTRACT_LABELS[field.slice(9)] ?? field.slice(9) : field)
+  editableLabel(field) ?? (field.startsWith('abstract.') ? ABSTRACT_LABELS[field.slice(9)] ?? field.slice(9) : field)
 
 /** Current value of an editable field. Landlord, tenant and premises fall back to the abstract, as displayed. */
 export function fieldValue(lease: Lease, key: EditableField['key']): string {
@@ -136,7 +146,7 @@ export async function updateLeaseDetails(lease: Lease, changes: Partial<Record<E
       abstract[key.slice(9)] = value
       abstractChanged = true
     } else if (key === 'title') {
-      if (!value) throw new Error('Title cannot be empty.')
+      if (!value) throw new Error(lt('err_title_empty'))
       patch.title = value
     } else {
       patch[key] = value
@@ -217,35 +227,35 @@ export type LeaseFileLog = {
   data: Record<string, unknown> | null
 }
 
-export const DOC_TYPE_LABELS: Record<DocType, string> = {
-  main_lease: 'Main lease',
-  amendment: 'Amendment',
-  addendum: 'Addendum',
-  commencement_letter: 'Commencement letter',
-  other: 'Other',
+const DOC_TYPES: DocType[] = ['main_lease', 'amendment', 'addendum', 'commencement_letter', 'other']
+
+export const DOC_TYPE_LABELS: Record<DocType, string> = localizedRecord(DOC_TYPES, (k) => translator(common).t(`docType_${k}`))
+
+const ABSTRACT_LABEL_KEYS: Record<string, LeaseMessageKey> = {
+  landlord: 'field_landlord',
+  tenant: 'field_tenant',
+  premises_address: 'field_premises',
+  rentable_area: 'field_rentable_area',
+  commencement_date: 'field_commencement',
+  term_end_date: 'abstract_term_end_date',
+  expiration_date: 'field_expiration',
+  term: 'field_term',
+  base_rent: 'field_base_rent',
+  renewal_notification_window_start: 'field_notification_window_start',
+  renewal_options_start: 'field_renewal_options_start',
+
+  rent_escalations: 'abstract_rent_escalations',
+  security_deposit: 'field_security_deposit',
+  renewal_options: 'abstract_renewal_options',
+  termination_options: 'abstract_termination_options',
+  permitted_use: 'field_permitted_use',
+  operating_expenses: 'field_operating_expenses',
+  changes_made: 'field_changes_made',
 }
 
-export const ABSTRACT_LABELS: Record<string, string> = {
-  landlord: 'Landlord',
-  tenant: 'Tenant',
-  premises_address: 'Premises',
-  rentable_area: 'Rentable area',
-  commencement_date: 'Commencement',
-  term_end_date: "Term End Date",
-  expiration_date: 'Expiration',
-  term: 'Term',
-  base_rent: 'Base rent',
-  renewal_notification_window_start: 'Notification Window Start Date',
-  renewal_options_start: 'Renewal Options Start Date',
-
-  rent_escalations: 'Rent escalations',
-  security_deposit: 'Security deposit',
-  renewal_options: 'Renewal options',
-  termination_options: 'Termination options',
-  permitted_use: 'Permitted use',
-  operating_expenses: 'Operating expenses',
-  changes_made: 'Changes made',
-}
+export const ABSTRACT_LABELS: Record<string, string> = localizedRecord(Object.keys(ABSTRACT_LABEL_KEYS), (k) =>
+  lt(ABSTRACT_LABEL_KEYS[k]),
+)
 
 export type Stage =
   | { stage: 'extracting'; page: number; pageCount: number; ocr: boolean }
@@ -260,7 +270,7 @@ const ANALYSIS_TIMEOUT_MS = 10 * 60 * 1000
 
 async function currentUserId() {
   const { data } = await supabase.auth.getUser()
-  if (!data.user) throw new Error('You are signed out. Log in and try again.')
+  if (!data.user) throw new Error(lt('err_signed_out'))
   return data.user.id
 }
 
@@ -282,7 +292,7 @@ async function savePages(fileId: string, pages: ExtractedPage[], log: FileLogger
   for (let i = 0; i < rows.length; i += 100) {
     const batch = rows.slice(i, i + 100)
     const { error } = await supabase.from('lease_file_pages').upsert(batch)
-    if (error) throw new Error(`Saving page text failed: ${error.message}`)
+    if (error) throw new Error(lt('err_save_pages', { detail: error.message }))
     log.info('save-pages', `Saved pages ${i + 1}-${i + batch.length}`)
   }
   log.info('save-pages', 'All page text saved', { pages: rows.length, ms: elapsed(started) })
@@ -296,11 +306,11 @@ export async function uploadLeaseFile(file: File, onStage: (s: Stage) => void): 
 
   if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
     log.error('validate', 'Rejected: not a PDF', { type: file.type })
-    throw new Error('Only PDF files are supported.')
+    throw new Error(lt('err_pdf_only'))
   }
   if (file.size > MAX_FILE_BYTES) {
     log.error('validate', 'Rejected: file larger than 50 MB', { size: file.size })
-    throw new Error('PDF must be 50 MB or smaller.')
+    throw new Error(lt('err_too_large'))
   }
   log.info('validate', 'File passed validation')
 
@@ -380,7 +390,7 @@ export async function retryLeaseFile(
     log.info('retry', 'Downloading original PDF from storage', { path: file.storage_path })
     const downloadStarted = performance.now()
     const { data: blob, error } = await supabase.storage.from(BUCKET).download(file.storage_path)
-    if (error) throw new Error(`Downloading original PDF failed: ${error.message}`)
+    if (error) throw new Error(lt('err_download_original', { detail: error.message }))
     const bytes = new Uint8Array(await blob.arrayBuffer())
     log.info('retry', 'Original PDF downloaded', { bytes: bytes.length, ms: elapsed(downloadStarted) })
 
@@ -444,9 +454,7 @@ async function analyzeAndSplit(
       functionVersion,
     })
     if (error.name === 'FunctionsFetchError') {
-      throw new Error(
-        'Could not reach the "analyze-lease" Edge Function. Make sure it is deployed to your Supabase project, then click Retry.',
-      )
+      throw new Error(lt('err_analyze_unreachable'))
     }
     let detail = error.message
     try {
@@ -454,7 +462,7 @@ async function analyzeAndSplit(
     } catch {
       // Not a JSON error response; keep the generic message.
     }
-    throw new Error(`Could not start analysis: ${detail}`)
+    throw new Error(lt('err_start_analysis', { detail }))
   }
   log.info('analyze', 'Edge Function accepted the job; analysis running in background', {
     httpStatus: response?.status,
@@ -476,16 +484,16 @@ async function analyzeAndSplit(
       .select('status, error')
       .eq('id', fileId)
       .single()
-    if (pollError) throw new Error(`Checking analysis status failed: ${pollError.message}`)
+    if (pollError) throw new Error(lt('err_check_status', { detail: pollError.message }))
     if (row.status !== lastStatus || polls % 10 === 0) {
       log.info('poll', `Status: ${row.status} (after ${Math.round(elapsed(pollStarted) / 1000)}s)`, { status: row.status, polls })
       lastStatus = row.status
     }
     if (row.status === 'analyzed') break
-    if (row.status === 'failed') throw new Error(row.error ?? 'Analysis failed.')
+    if (row.status === 'failed') throw new Error(row.error ?? lt('err_analysis_failed'))
     if (Date.now() > deadline) {
       log.error('poll', 'Gave up waiting for analysis', { waitedMs: elapsed(pollStarted), lastStatus })
-      throw new Error('Analysis timed out. Use Retry to try again.')
+      throw new Error(lt('err_analysis_timeout'))
     }
   }
   log.info('analyze', 'Analysis finished', { waitedMs: elapsed(pollStarted) })
@@ -506,7 +514,7 @@ async function splitAndStore(
     .select('id, doc_type, title, page_start, page_end')
     .eq('file_id', fileId)
     .order('page_start')
-  if (error) throw new Error(`Loading detected documents failed: ${error.message}`)
+  if (error) throw new Error(lt('err_load_documents', { detail: error.message }))
   log.info('split', `${leases.length} document(s) detected`, {
     documents: leases.map((l) => ({ type: l.doc_type, title: l.title, pages: `${l.page_start}-${l.page_end}` })),
   })
@@ -539,7 +547,7 @@ async function splitAndStore(
       const { error: upErr } = await supabase.storage
         .from(BUCKET)
         .upload(path, parts[i], { contentType: 'application/pdf', upsert: true })
-      if (upErr) throw new Error(`Uploading split PDF ${i + 1} failed: ${upErr.message}`)
+      if (upErr) throw new Error(lt('err_upload_split', { n: i + 1, detail: upErr.message }))
       const { error: updErr } = await supabase.from('leases').update({ storage_path: path }).eq('id', leases[i].id)
       if (updErr) throw new Error(updErr.message)
       log.info('split', `Stored part ${i + 1}/${leases.length}: ${leases[i].title}`, { path, ms: elapsed(upStarted) })
@@ -577,7 +585,7 @@ export async function openStoredPdf(path: string) {
   if (error || !data) {
     console.error('[lease] open-pdf: could not create signed URL', error?.message)
     tab?.close()
-    throw new Error(error?.message ?? 'Could not open file.')
+    throw new Error(error?.message ?? lt('err_open_file'))
   }
   if (tab) tab.location.href = data.signedUrl
   else window.location.href = data.signedUrl
@@ -624,17 +632,17 @@ export type AiUsage = {
 /** Every input token of a request, including those written to or read from the prompt cache. */
 export const totalInputTokens = (u: AiUsage) => u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
 
-export const PROCESS_LABELS: Record<AiUsage['process'], string> = {
-  analysis: 'Analysis',
-  reanalysis: 'Re-analysis',
-  chat: 'Chat question',
-  insights: 'Opportunities',
-}
+const PROCESSES: Array<AiUsage['process']> = ['analysis', 'reanalysis', 'chat', 'insights']
+
+export const PROCESS_LABELS: Record<AiUsage['process'], string> = localizedRecord(PROCESSES, (k) => lt(`process_${k}`))
 
 export function formatTokens(n: number) {
   if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
-  return `${(n / 1_000_000).toFixed(2)}M`
+  if (n < 1_000_000) {
+    const digits = n < 10_000 ? 1 : 0
+    return `${formatNumber(n / 1000, { minimumFractionDigits: digits, maximumFractionDigits: digits })}k`
+  }
+  return `${formatNumber(n / 1_000_000, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`
 }
 
 export async function fetchFileUsage(fileId: string): Promise<AiUsage[]> {

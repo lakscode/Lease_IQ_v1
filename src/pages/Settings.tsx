@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { CLAUDE_MODELS, fetchClaudeModel, saveClaudeModel } from '../lib/settings'
 import { useDialog } from '../components/Dialog'
+import { useT } from '../i18n'
+import { settingsPage } from '../i18n/messages/settingsPage'
+import { common } from '../i18n/messages/common'
 
 function ModelSettings() {
+  const { t } = useT(settingsPage)
+  const { t: tc } = useT(common)
   const [saved, setSaved] = useState<string | null>(null)
   const [selected, setSelected] = useState(CLAUDE_MODELS[0].id)
   const [loading, setLoading] = useState(true)
@@ -28,7 +33,7 @@ function ModelSettings() {
     try {
       await saveClaudeModel(selected)
       setSaved(selected)
-      setMessage('Saved. New analyses and chat questions use this model.')
+      setMessage(t('modelSaved'))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -41,13 +46,13 @@ function ModelSettings() {
 
   return (
     <section className="card settings-section">
-      <h2>AI model</h2>
+      <h2>{t('aiModel')}</h2>
       <div className="settings-row">
         <div>
-          <div className="doc-title">Claude model</div>
+          <div className="doc-title">{t('claudeModel')}</div>
           <p className="muted">
-            Used for lease analysis and Ask LeaseIQ.{' '}
-            {saved ? '' : 'None saved yet, so the default from the Edge Function config is used.'}
+            {t('modelUsedFor')}{' '}
+            {saved ? '' : t('noModelSaved')}
           </p>
         </div>
         <div className="model-picker">
@@ -56,7 +61,7 @@ function ModelSettings() {
             value={selected}
             onChange={(e) => setSelected(e.target.value)}
             disabled={loading || saving}
-            aria-label="Claude model"
+            aria-label={t('claudeModel')}
           >
             {unknownSaved && <option value={saved}>{saved}</option>}
             {CLAUDE_MODELS.map((m) => (
@@ -66,7 +71,7 @@ function ModelSettings() {
             ))}
           </select>
           <button className="btn btn-sm" onClick={save} disabled={loading || saving || selected === saved}>
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? tc('saving') : tc('save')}
           </button>
         </div>
       </div>
@@ -83,15 +88,16 @@ function ModelSettings() {
 
 export function Settings() {
   const dialog = useDialog()
+  const { t } = useT(settingsPage)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const recreateClauses = async () => {
     const ok = await dialog.confirm({
-      title: 'Recreate the lease_clauses table?',
-      message: 'All clauses are deleted for every user. Re-analyze files to classify their clauses again.',
-      confirmLabel: 'Recreate table',
+      title: t('recreateConfirmTitle'),
+      message: t('recreateConfirmMessage'),
+      confirmLabel: t('recreateTable'),
       danger: true,
     })
     if (!ok) return
@@ -104,28 +110,25 @@ export function Settings() {
       console.error('[settings] recreate lease_clauses: failed', error)
       setError(error.message)
     } else {
-      setMessage('lease_clauses was recreated. Re-analyze files to classify their clauses again.')
+      setMessage(t('recreated'))
     }
   }
 
   return (
     <main className="container">
-      <h1>Settings</h1>
+      <h1>{t('title')}</h1>
 
       <ModelSettings />
 
       <section className="card settings-section">
-        <h2>Database</h2>
+        <h2>{t('database')}</h2>
         <div className="settings-row">
           <div>
-            <div className="doc-title">Recreate lease_clauses table</div>
-            <p className="muted">
-              Drops the table and creates it again with its index and access policy. Use this if the
-              table is missing or broken. Every stored clause is deleted.
-            </p>
+            <div className="doc-title">{t('recreateTitle')}</div>
+            <p className="muted">{t('recreateText')}</p>
           </div>
           <button className="btn btn-danger nowrap" onClick={recreateClauses} disabled={busy}>
-            {busy ? 'Recreating…' : 'Recreate table'}
+            {busy ? t('recreating') : t('recreateTable')}
           </button>
         </div>
         {message && <p className="success">{message}</p>}

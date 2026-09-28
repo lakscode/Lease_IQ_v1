@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { fetchLeaseClauses, LOW_CONFIDENCE_SCORE, type LeaseClause } from '../lib/leases'
+import { useT } from '../i18n'
+import { details } from '../i18n/messages/details'
 
 /** Clauses of one document, grouped by their SVM label. */
 export function LeaseClauses({ leaseId }: { leaseId: string }) {
+  const { t } = useT(details)
   const [clauses, setClauses] = useState<LeaseClause[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -10,9 +13,9 @@ export function LeaseClauses({ leaseId }: { leaseId: string }) {
     fetchLeaseClauses(leaseId).then(setClauses, (e) => setError(e.message))
   }, [leaseId])
 
-  if (error) return <p className="error small">Could not load clauses: {error}</p>
-  if (!clauses) return <p className="muted small">Loading clauses…</p>
-  if (!clauses.length) return <p className="muted small">No clauses yet. Re-analyze the file to classify its clauses.</p>
+  if (error) return <p className="error small">{t('clausesError', { error })}</p>
+  if (!clauses) return <p className="muted small">{t('loadingClauses')}</p>
+  if (!clauses.length) return <p className="muted small">{t('noClauses')}</p>
 
   const groups = new Map<string, LeaseClause[]>()
   for (const c of clauses) groups.set(c.label, [...(groups.get(c.label) ?? []), c])
@@ -22,7 +25,7 @@ export function LeaseClauses({ leaseId }: { leaseId: string }) {
   return (
     <div className="clauses">
       <h4>
-        Clauses <span className="muted small">{clauses.length} found · {uncertain} uncertain</span>
+        {t('clausesHeading')} <span className="muted small">{t('clausesSummary', { found: clauses.length, uncertain })}</span>
       </h4>
       {sorted.map(([label, items]) => (
         <details key={label} className="clause-group">
@@ -32,10 +35,10 @@ export function LeaseClauses({ leaseId }: { leaseId: string }) {
           {items.map((c) => (
             <div key={c.id} className="clause">
               <div className="muted small">
-                p. {c.page_number}
+                {t('pageSingle', { page: c.page_number })}
                 {c.score < LOW_CONFIDENCE_SCORE && (
-                  <span className="badge badge-pending clause-uncertain" title={`SVM score ${c.score}`}>
-                    uncertain{c.alternatives.length ? ` · or ${c.alternatives.map((a) => a.label).join(', ')}` : ''}
+                  <span className="badge badge-pending clause-uncertain" title={t('svmScore', { score: c.score })}>
+                    {c.alternatives.length ? t('uncertainOr', { labels: c.alternatives.map((a) => a.label).join(', ') }) : t('uncertain')}
                   </span>
                 )}
               </div>

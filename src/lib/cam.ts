@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { formatNumber } from '../i18n'
 
 /** CAM reconciliation terms extracted from the lease family (lease_insights.cam). -1 means not stated. */
 export type CamTerms = {
@@ -153,7 +154,7 @@ export function statementDeadline(terms: CamTerms | null, year: number): Date | 
   return d
 }
 
-export const money = (n: number) => n.toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+export const money = (n: number) => formatNumber(n, { style: 'currency', currency: 'USD' })
 
 export async function listReconciliations(familyId: string): Promise<CamReconciliation[]> {
   const { data, error } = await supabase

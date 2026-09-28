@@ -17,8 +17,10 @@ import { fallbackParams, resolveModel } from '../_shared/model.ts'
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '3'
+const FUNCTION_VERSION = '4'
 const MAX_INPUT_CHARS = 2_500_000
+// Interface languages of the app (src/i18n/index.tsx); the insight text is written in the requester's.
+const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian']
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -192,8 +194,9 @@ Deno.serve(async (req) => {
   const { data: userData, error: userError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
   if (userError || !userData.user) return json({ error: 'Not authenticated' }, 401)
 
-  const { leaseId } = await req.json().catch(() => ({}))
+  const { leaseId, language: requested } = await req.json().catch(() => ({}))
   if (typeof leaseId !== 'string') return json({ error: 'leaseId is required' }, 400)
+  const language = LANGUAGES.includes(requested) ? (requested as string) : 'English'
 
   if (!ANTHROPIC_API_KEY || ANTHROPIC_API_KEY === 'sk-ant-...') {
     return json({ error: 'The Anthropic API key is not set. Put it in supabase/functions/analyze-lease/config.ts and redeploy.' }, 500)
@@ -230,7 +233,7 @@ Deno.serve(async (req) => {
   if (upsertError) return json({ error: upsertError.message }, 500)
 
   EdgeRuntime.waitUntil(
-    generate(supabase, root, family, model).catch(async (err) => {
+    generate(supabase, root, family, model, language).catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err)
       console.error(JSON.stringify({ v: FUNCTION_VERSION, step: 'failed', familyId: root.id, error: message }))
       await supabase.from('lease_insights').update({ status: 'failed', error: message }).eq('lease_id', root.id)
@@ -240,7 +243,7 @@ Deno.serve(async (req) => {
   return json({ familyId: root.id, status: 'generating', version: FUNCTION_VERSION }, 202)
 })
 
-async function generate(supabase: SupabaseClient, root: FamilyDoc, family: FamilyDoc[], model: string) {
+async function generate(supabase: SupabaseClient, root: FamilyDoc, family: FamilyDoc[], model: string, language: string) {
   // Page text of every document, read from each document's own file.
   const parts: string[] = []
   for (const [index, doc] of family.entries()) {
@@ -281,7 +284,13 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
     ...fallbackParams(model),
     thinking: { type: 'adaptive' },
     output_config: { effort: 'high', format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
-    system: SYSTEM_PROMPT,
+    system: [
+      { type: 'text', text: SYSTEM_PROMPT },
+      {
+        type: 'text',
+        text: `Write every free-text value (summary, detail, share_basis, the lists and the other CAM descriptions) in ${language}, even when the lease is in another language. Keep enum values, dates as YYYY-MM-DD, and amounts as written in the lease.`,
+      },
+    ],
     messages: [
       {
         role: 'user',

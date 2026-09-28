@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DOC_TYPE_LABELS, openStoredPdf, type Lease, type LeaseFile } from '../lib/leases'
+import { translator, useT } from '../i18n'
+import { details } from '../i18n/messages/details'
 
 export type DocEntry = { lease: Lease; child: boolean; note?: string }
 
@@ -16,6 +18,7 @@ export function fileDocuments(file: LeaseFile, allLeases: Lease[]): DocEntry[] {
   const mains = inFile.filter((l) => l.doc_type === 'main_lease')
   const mainIds = new Set(mains.map((m) => m.id))
 
+  const { t } = translator(details)
   const entries: DocEntry[] = []
   for (const main of mains) {
     entries.push({ lease: main, child: false })
@@ -27,7 +30,7 @@ export function fileDocuments(file: LeaseFile, allLeases: Lease[]): DocEntry[] {
   for (const doc of inFile) {
     if (doc.doc_type === 'main_lease' || (doc.parent_id && mainIds.has(doc.parent_id))) continue
     const parent = doc.parent_id ? leasesById.get(doc.parent_id) : undefined
-    const note = parent ? `belongs to ${parent.title}` : doc.doc_type === 'other' ? undefined : 'main lease not found'
+    const note = parent ? t('belongsTo', { title: parent.title }) : doc.doc_type === 'other' ? undefined : t('mainLeaseNotFound')
     entries.push({ lease: doc, child: false, note })
   }
   return entries
@@ -36,6 +39,7 @@ export function fileDocuments(file: LeaseFile, allLeases: Lease[]): DocEntry[] {
 /** The per-document cells of one row in the uploaded files table. */
 export function DocumentCells({ entry, onViewText }: { entry: DocEntry; onViewText: (lease: Lease) => void }) {
   const { lease, child, note } = entry
+  const { t } = useT(details)
   const [error, setError] = useState<string | null>(null)
 
   const openPdf = () => {
@@ -51,9 +55,11 @@ export function DocumentCells({ entry, onViewText }: { entry: DocEntry; onViewTe
         <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>
       </td>
       <td>
-        <Link to={`/leases/${lease.id}`} className="doc-title doc-link" title="Open details">{lease.title}</Link>
+        <Link to={`/leases/${lease.id}`} className="doc-title doc-link" title={t('openDetails')}>{lease.title}</Link>
         <div className="muted small">
-          {lease.page_start === lease.page_end ? `p. ${lease.page_start}` : `p. ${lease.page_start}–${lease.page_end}`}
+          {lease.page_start === lease.page_end
+            ? t('pageSingle', { page: lease.page_start })
+            : t('pageRange', { start: lease.page_start, end: lease.page_end })}
           {note && <> · {note}</>}
         </div>
         {error && <div className="error small">{error}</div>}
@@ -62,8 +68,8 @@ export function DocumentCells({ entry, onViewText }: { entry: DocEntry; onViewTe
       <td>{lease.tenant ?? '—'}</td>
       <td className="premises-cell">{lease.premises ?? '—'}</td>
       <td className="actions">
-        <button className="btn btn-ghost btn-sm" onClick={() => onViewText(lease)}>Text</button>
-        <button className="btn btn-ghost btn-sm" onClick={openPdf} disabled={!lease.storage_path}>PDF</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => onViewText(lease)}>{t('text')}</button>
+        <button className="btn btn-ghost btn-sm" onClick={openPdf} disabled={!lease.storage_path}>{t('pdf')}</button>
       </td>
     </>
   )

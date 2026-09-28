@@ -13,32 +13,32 @@ import {
   type CamTerms,
 } from '../lib/cam'
 import { useDialog } from './Dialog'
+import { formatDate, formatNumber, useT } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { camReconciliation } from '../i18n/messages/camReconciliation'
 
 type NumberField = Exclude<keyof CamInputs, 'capAppliesTo'>
 
-const EXPENSE_FIELDS: Array<[NumberField, string, string]> = [
-  ['totalExpenses', 'Total operating expenses', 'All CAM / operating expenses for the year'],
-  ['excludedExpenses', 'Excluded expenses', 'Items the lease excludes from recovery'],
-  ['variableExpenses', 'Variable expenses', 'Part that varies with occupancy (for gross-up)'],
-  ['occupancyPercent', 'Average occupancy %', 'Building occupancy for the year (for gross-up)'],
-  ['controllableExpenses', 'Controllable expenses', 'For caps on controllable expenses only'],
-  ['baseYearExpenses', 'Base year expenses', 'Only if the tenant pays increases over a base year'],
-  ['priorYearCapBase', 'Prior-year capped amount', "Tenant's capped charge the cap grows from"],
-  ['estimatesPaid', 'Estimates paid', 'CAM estimates the tenant paid during the year'],
-]
+// Labels and hints are the `${field}` and `${field}Hint` keys of the camReconciliation messages.
+const EXPENSE_FIELDS = [
+  'totalExpenses',
+  'excludedExpenses',
+  'variableExpenses',
+  'occupancyPercent',
+  'controllableExpenses',
+  'baseYearExpenses',
+  'priorYearCapBase',
+  'estimatesPaid',
+] as const satisfies readonly NumberField[]
 
-const RATE_FIELDS: Array<[NumberField, string]> = [
-  ['proRataPercent', 'Pro-rata share %'],
-  ['adminFeePercent', 'Admin fee %'],
-  ['grossUpPercent', 'Gross-up to %'],
-  ['capPercent', 'Cap %'],
-]
-
-const pct = (n: number) => (n >= 0 ? `${n}%` : null)
+const RATE_FIELDS = ['proRataPercent', 'adminFeePercent', 'grossUpPercent', 'capPercent'] as const satisfies readonly NumberField[]
 
 /** The lease's CAM terms, and a calculator for each year's reconciliation. */
 export function CamReconciliation({ familyId, terms, ready }: { familyId: string; terms: CamTerms | null; ready: boolean }) {
   const dialog = useDialog()
+  const { t, tp } = useT(camReconciliation)
+  const { t: tc } = useT(common)
+  const pct = (n: number) => (n >= 0 ? t('percent', { value: formatNumber(n) }) : null)
   const [year, setYear] = useState(new Date().getFullYear() - 1)
   const [inputs, setInputs] = useState<CamInputs>(() => defaultInputs(terms))
   const [notes, setNotes] = useState('')
@@ -73,7 +73,7 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
     setYear(r.year)
     setInputs(r.inputs)
     setNotes(r.notes ?? '')
-    setMessage(`Loaded the ${r.year} reconciliation.`)
+    setMessage(t('loaded', { year: r.year }))
   }
 
   const save = async () => {
@@ -83,7 +83,7 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
     try {
       const row = await saveReconciliation(familyId, year, inputs, notes)
       setSaved((list) => [row, ...list.filter((r) => r.year !== row.year)].sort((a, b) => b.year - a.year))
-      setMessage(`Saved the ${year} reconciliation.`)
+      setMessage(t('saved', { year }))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -93,9 +93,9 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
 
   const remove = async (r: SavedReconciliation) => {
     const ok = await dialog.confirm({
-      title: `Delete the ${r.year} reconciliation?`,
-      message: "The saved figures for this year will be deleted. This can't be undone.",
-      confirmLabel: 'Delete',
+      title: t('deleteTitle', { year: r.year }),
+      message: t('deleteMessage'),
+      confirmLabel: tc('delete'),
       danger: true,
     })
     if (!ok) return
@@ -109,17 +109,37 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
 
   const termRows: Array<[string, string | null]> = terms
     ? [
-        ['Pro-rata share', [pct(terms.pro_rata_share_percent), terms.share_basis].filter(Boolean).join(' · ') || null],
-        ['Recoverable', terms.recoverable_items || null],
-        ['Exclusions', terms.exclusions || null],
-        ['Admin fee', terms.admin_fee_percent >= 0 ? `${terms.admin_fee_percent}%${terms.admin_fee_basis === 'total_expenses' ? ' of total expenses' : terms.admin_fee_basis === 'tenant_share' ? " of tenant's share" : ''}` : null],
-        ['Cap', terms.cap_percent >= 0 ? [`${terms.cap_percent}%`, terms.cap_type.replace('_', '-'), terms.cap_applies_to === 'controllable' ? 'controllable only' : null, terms.cap_terms].filter((x) => x && x !== 'not-stated').join(' · ') : terms.cap_terms || null],
-        ['Gross-up', pct(terms.gross_up_percent)],
-        ['Base year / stop', terms.base_year || null],
-        ['Expense year', terms.expense_year || null],
-        ['Estimates', terms.estimate_payments || null],
-        ['Statement due', terms.reconciliation_deadline || null],
-        ['Audit rights', terms.audit_rights || null],
+        [t('termProRata'), [pct(terms.pro_rata_share_percent), terms.share_basis].filter(Boolean).join(' · ') || null],
+        [t('termRecoverable'), terms.recoverable_items || null],
+        [t('termExclusions'), terms.exclusions || null],
+        [
+          t('termAdminFee'),
+          terms.admin_fee_percent >= 0
+            ? t(
+                terms.admin_fee_basis === 'total_expenses' ? 'adminFeeOfTotal' : terms.admin_fee_basis === 'tenant_share' ? 'adminFeeOfShare' : 'percent',
+                { value: formatNumber(terms.admin_fee_percent) },
+              )
+            : null,
+        ],
+        [
+          t('termCap'),
+          terms.cap_percent >= 0
+            ? [
+                pct(terms.cap_percent),
+                terms.cap_type === 'not_stated' ? null : t(`capType_${terms.cap_type}`),
+                terms.cap_applies_to === 'controllable' ? t('capControllableOnly') : null,
+                terms.cap_terms,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : terms.cap_terms || null,
+        ],
+        [t('termGrossUp'), pct(terms.gross_up_percent)],
+        [t('termBaseYear'), terms.base_year || null],
+        [t('termExpenseYear'), terms.expense_year || null],
+        [t('termEstimates'), terms.estimate_payments || null],
+        [t('termStatementDue'), terms.reconciliation_deadline || null],
+        [t('termAuditRights'), terms.audit_rights || null],
       ]
     : []
 
@@ -127,13 +147,13 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
     <div className="cam">
       <div className="cam-grid">
         <section>
-          <h3 className="cam-heading">Lease CAM terms</h3>
+          <h3 className="cam-heading">{t('termsHeading')}</h3>
           {!ready ? (
-            <p className="muted small">Click Generate above to extract the CAM terms from the lease and its amendments.</p>
+            <p className="muted small">{t('clickGenerate')}</p>
           ) : !terms ? (
-            <p className="muted small">No CAM terms yet. Click Refresh above to extract them.</p>
+            <p className="muted small">{t('noTerms')}</p>
           ) : !terms.has_cam ? (
-            <p className="muted small">This lease family does not charge CAM or operating expenses.</p>
+            <p className="muted small">{t('noCam')}</p>
           ) : (
             <>
               <table className="panel-table">
@@ -150,7 +170,7 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
                 <div className="insight-meta small">
                   {terms.citations.map((c) => (
                     <Link key={`${c.leaseId}:${c.page}`} to={`/leases/${c.leaseId}`} className="chat-source" title={c.title}>
-                      {c.title}, p. {c.page}
+                      {t('citation', { title: c.title, page: c.page })}
                     </Link>
                   ))}
                 </div>
@@ -161,19 +181,27 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
 
         <section>
           <h3 className="cam-heading">
-            Reconciliation for{' '}
-            <input
-              className="cam-year"
-              type="number"
-              value={year}
-              onChange={(e) => setYear(Number(e.target.value) || year)}
-              aria-label="Reconciliation year"
-            />
+            {t('reconciliationFor')
+              .split(/(\{year\})/)
+              .map((part, i) =>
+                part === '{year}' ? (
+                  <input
+                    key={i}
+                    className="cam-year"
+                    type="number"
+                    value={year}
+                    onChange={(e) => setYear(Number(e.target.value) || year)}
+                    aria-label={t('yearAria')}
+                  />
+                ) : (
+                  part
+                ),
+              )}
           </h3>
           <div className="cam-fields">
-            {EXPENSE_FIELDS.map(([field, label, hint]) => (
-              <label key={field} title={hint}>
-                <span>{label}</span>
+            {EXPENSE_FIELDS.map((field) => (
+              <label key={field} title={t(`${field}Hint`)}>
+                <span>{t(field)}</span>
                 <input
                   inputMode="decimal"
                   value={inputs[field] ?? ''}
@@ -184,25 +212,25 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
             ))}
           </div>
           <div className="cam-fields cam-rates">
-            {RATE_FIELDS.map(([field, label]) => (
+            {RATE_FIELDS.map((field) => (
               <label key={field}>
-                <span>{label}</span>
+                <span>{t(field)}</span>
                 <input inputMode="decimal" value={inputs[field] ?? ''} onChange={(e) => setNumber(field, e.target.value)} placeholder="%" />
               </label>
             ))}
             <label>
-              <span>Cap applies to</span>
+              <span>{t('capAppliesTo')}</span>
               <select
                 className="select"
                 value={inputs.capAppliesTo}
                 onChange={(e) => setInputs((c) => ({ ...c, capAppliesTo: e.target.value as CamInputs['capAppliesTo'] }))}
               >
-                <option value="all">All expenses</option>
-                <option value="controllable">Controllable only</option>
+                <option value="all">{t('allExpenses')}</option>
+                <option value="controllable">{t('controllableOnly')}</option>
               </select>
             </label>
           </div>
-          <p className="muted small">Rates are filled in from the lease; change them if needed.</p>
+          <p className="muted small">{t('ratesNote')}</p>
         </section>
       </div>
 
@@ -210,31 +238,31 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
         <div className="cam-result">
           <table className="panel-table">
             <tbody>
-              <tr><td>Recoverable expenses</td><td className="panel-num">{money(result.recoverable)}</td></tr>
-              {result.grossUpAdjustment > 0 && <tr><td>Gross-up adjustment</td><td className="panel-num">+ {money(result.grossUpAdjustment)}</td></tr>}
-              {result.baseYearDeduction > 0 && <tr><td>Less base year expenses</td><td className="panel-num">− {money(result.baseYearDeduction)}</td></tr>}
-              <tr><td>Tenant share ({inputs.proRataPercent ?? 0}%)</td><td className="panel-num">{money(result.tenantShare)}</td></tr>
-              {result.adminFee > 0 && <tr><td>Admin fee ({inputs.adminFeePercent}%)</td><td className="panel-num">+ {money(result.adminFee)}</td></tr>}
+              <tr><td>{t('recoverableExpenses')}</td><td className="panel-num">{money(result.recoverable)}</td></tr>
+              {result.grossUpAdjustment > 0 && <tr><td>{t('grossUpAdjustment')}</td><td className="panel-num">+ {money(result.grossUpAdjustment)}</td></tr>}
+              {result.baseYearDeduction > 0 && <tr><td>{t('lessBaseYear')}</td><td className="panel-num">− {money(result.baseYearDeduction)}</td></tr>}
+              <tr><td>{t('tenantShare', { value: formatNumber(inputs.proRataPercent ?? 0) })}</td><td className="panel-num">{money(result.tenantShare)}</td></tr>
+              {result.adminFee > 0 && <tr><td>{t('adminFee', { value: formatNumber(inputs.adminFeePercent ?? 0) })}</td><td className="panel-num">+ {money(result.adminFee)}</td></tr>}
               {result.capReduction > 0 && (
-                <tr><td>Cap reduction (limit {money(result.capLimit ?? 0)})</td><td className="panel-num">− {money(result.capReduction)}</td></tr>
+                <tr><td>{t('capReduction', { limit: money(result.capLimit ?? 0) })}</td><td className="panel-num">− {money(result.capReduction)}</td></tr>
               )}
-              <tr className="usage-total"><td>CAM due for {year}</td><td className="panel-num">{money(result.totalDue)}</td></tr>
-              <tr><td>Estimates paid</td><td className="panel-num">− {money(result.estimatesPaid)}</td></tr>
+              <tr className="usage-total"><td>{t('camDueFor', { year })}</td><td className="panel-num">{money(result.totalDue)}</td></tr>
+              <tr><td>{t('estimatesPaid')}</td><td className="panel-num">− {money(result.estimatesPaid)}</td></tr>
               <tr className={`usage-total ${result.balance > 0 ? 'cam-owed' : 'cam-credit'}`}>
-                <td>{result.balance > 0 ? 'Tenant owes' : result.balance < 0 ? 'Credit due to tenant' : 'Balance'}</td>
+                <td>{result.balance > 0 ? t('tenantOwes') : result.balance < 0 ? t('creditDue') : t('balance')}</td>
                 <td className="panel-num">{money(Math.abs(result.balance))}</td>
               </tr>
             </tbody>
           </table>
           {deadline && (
             <p className={`small ${deadline < new Date() ? 'error' : 'muted'}`}>
-              Statement due to the tenant by {deadline.toLocaleDateString()} ({terms?.reconciliation_deadline_days} days after year end).
+              {tp('statementDueBy', terms?.reconciliation_deadline_days ?? 0, { date: formatDate(deadline) })}
             </p>
           )}
           <div className="cam-save">
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" aria-label="Notes" />
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('notesPlaceholder')} aria-label={t('notes')} />
             <button className="btn btn-sm" onClick={save} disabled={saving}>
-              {saving ? 'Saving…' : saved.some((r) => r.year === year) ? `Update ${year}` : `Save ${year}`}
+              {saving ? tc('saving') : saved.some((r) => r.year === year) ? t('updateYear', { year }) : t('saveYear', { year })}
             </button>
           </div>
         </div>
@@ -244,15 +272,15 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
 
       {saved.length > 0 && (
         <>
-          <h3 className="cam-heading">Saved reconciliations</h3>
+          <h3 className="cam-heading">{t('savedHeading')}</h3>
           <table className="panel-table">
             <thead>
               <tr>
-                <th>Year</th>
-                <th className="panel-num">CAM due</th>
-                <th className="panel-num">Estimates paid</th>
-                <th className="panel-num">Balance</th>
-                <th>Notes</th>
+                <th>{t('colYear')}</th>
+                <th className="panel-num">{t('colCamDue')}</th>
+                <th className="panel-num">{t('estimatesPaid')}</th>
+                <th className="panel-num">{t('balance')}</th>
+                <th>{t('notes')}</th>
                 <th />
               </tr>
             </thead>
@@ -263,13 +291,16 @@ export function CamReconciliation({ familyId, terms, ready }: { familyId: string
                   <td className="panel-num">{money(r.result.totalDue)}</td>
                   <td className="panel-num">{money(r.result.estimatesPaid)}</td>
                   <td className={`panel-num ${r.result.balance > 0 ? 'cam-owed' : 'cam-credit'}`}>
-                    {r.result.balance > 0 ? 'Owes ' : r.result.balance < 0 ? 'Credit ' : ''}
-                    {money(Math.abs(r.result.balance))}
+                    {r.result.balance > 0
+                      ? t('owes', { amount: money(r.result.balance) })
+                      : r.result.balance < 0
+                        ? t('credit', { amount: money(-r.result.balance) })
+                        : money(0)}
                   </td>
                   <td className="small">{r.notes ?? ''}</td>
                   <td className="actions">
-                    <button className="btn btn-ghost btn-sm" onClick={() => load(r)}>Open</button>
-                    <button className="btn btn-ghost btn-sm danger" onClick={() => remove(r)}>Delete</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => load(r)}>{t('open')}</button>
+                    <button className="btn btn-ghost btn-sm danger" onClick={() => remove(r)}>{tc('delete')}</button>
                   </td>
                 </tr>
               ))}

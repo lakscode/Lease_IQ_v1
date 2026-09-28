@@ -18,31 +18,53 @@ import { TextViewer } from '../components/TextViewer'
 import { LogViewer } from '../components/LogViewer'
 import { checkSetup, type SetupIssue } from '../lib/health'
 import { useDialog } from '../components/Dialog'
+import { formatDateTime, formatNumber, formatTime, useT, type Translator } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { abstraction } from '../i18n/messages/abstraction'
+
+type T = Translator<typeof abstraction.en>['t']
+
+/** Renders a translated sentence with the {name} placeholder in bold. */
+function withStrongName(text: string, name: string) {
+  const [before, after = ''] = text.split('{name}')
+  return (
+    <>
+      {before}
+      <strong>{name}</strong>
+      {after}
+    </>
+  )
+}
 
 const FINAL_STATUSES = new Set(['completed', 'failed'])
 const REFRESH_MS = 4000
 
-function describeStage(s: Stage): { text: string; percent?: number } {
+function describeStage(s: Stage, t: T): { text: string; percent?: number } {
   switch (s.stage) {
     case 'extracting':
       return {
-        text: `Reading page ${s.page} of ${s.pageCount}${s.ocr ? ' (scanned page, converting with OCR)' : ''}`,
+        text: t(s.ocr ? 'stageReadingPageOcr' : 'stageReadingPage', { page: formatNumber(s.page), pageCount: formatNumber(s.pageCount) }),
         percent: Math.round((s.page / s.pageCount) * 100),
       }
     case 'uploading':
-      return { text: 'Uploading…' }
+      return { text: t('stageUploading') }
     case 'retrying':
-      return { text: 'Retrying: downloading original PDF…' }
+      return { text: t('stageRetrying') }
     case 'reanalyzing':
-      return { text: 'Re-analyzing: downloading original PDF…' }
+      return { text: t('stageReanalyzing') }
     case 'analyzing':
-      return { text: 'Analyzing with AI: finding the main lease, amendments, addendum and commencement letters, and abstracting key terms…' }
+      return { text: t('stageAnalyzing') }
     case 'splitting':
-      return { text: `Splitting into separate documents (${s.done + 1} of ${s.total})…`, percent: Math.round(((s.done + 1) / s.total) * 100) }
+      return {
+        text: t('stageSplitting', { current: formatNumber(s.done + 1), total: formatNumber(s.total) }),
+        percent: Math.round(((s.done + 1) / s.total) * 100),
+      }
   }
 }
 
 export function LeaseAbstraction() {
+  const { t, tp } = useT(abstraction)
+  const { t: tc } = useT(common)
   const [files, setFiles] = useState<LeaseFile[]>([])
   const [leases, setLeases] = useState<Lease[]>([])
   const [usage, setUsage] = useState<AiUsage[]>([])
@@ -110,7 +132,7 @@ export function LeaseAbstraction() {
       try {
         await uploadLeaseFile(file, (stage) => setUpload({ name: file.name, stage }))
       } catch (e) {
-        setUploadError(`${file.name}: ${e instanceof Error ? e.message : String(e)}`)
+        setUploadError(t('uploadError', { name: file.name, error: e instanceof Error ? e.message : String(e) }))
       }
       await load()
     }
@@ -128,14 +150,9 @@ export function LeaseAbstraction() {
     if (
       reanalyze &&
       !(await dialog.confirm({
-        title: 'Re-analyze this file?',
-        message: (
-          <>
-            <strong>{file.file_name}</strong> will be analyzed again with AI. Its documents and clauses will be replaced with the
-            new results.
-          </>
-        ),
-        confirmLabel: 'Re-analyze',
+        title: t('reanalyzeTitle'),
+        message: withStrongName(t('reanalyzeMessage'), file.file_name),
+        confirmLabel: t('reanalyze'),
       }))
     ) {
       return
@@ -153,20 +170,16 @@ export function LeaseAbstraction() {
 
   const remove = async (file: LeaseFile) => {
     const ok = await dialog.confirm({
-      title: 'Delete this file?',
-      message: (
-        <>
-          <strong>{file.file_name}</strong> and every document extracted from it will be deleted. This can't be undone.
-        </>
-      ),
-      confirmLabel: 'Delete',
+      title: t('deleteTitle'),
+      message: withStrongName(t('deleteMessage'), file.file_name),
+      confirmLabel: tc('delete'),
       danger: true,
     })
     if (!ok) return
     try {
       await deleteLeaseFile(file)
     } catch (e) {
-      await dialog.alert({ title: 'Could not delete the file', message: e instanceof Error ? e.message : String(e) })
+      await dialog.alert({ title: t('deleteFailed'), message: e instanceof Error ? e.message : String(e) })
     }
     await load()
   }
@@ -175,25 +188,22 @@ export function LeaseAbstraction() {
   const usageByFile = new Map<string, AiUsage[]>()
   for (const u of usage) if (u.file_id) usageByFile.set(u.file_id, [...(usageByFile.get(u.file_id) ?? []), u])
   const logFile = logFileId ? filesById.get(logFileId) : undefined
-  const progress = upload ? describeStage(upload.stage) : null
+  const progress = upload ? describeStage(upload.stage, t) : null
 
   return (
     <main className="container wide">
-      <h1>Lease Abstraction</h1>
-      <p className="muted">
-        Upload lease PDFs. Scanned pages are converted to text with OCR, then AI splits bundled files into the main
-        lease, amendments, addendum and commencement letters, and extracts the key terms.
-      </p>
+      <h1>{t('title')}</h1>
+      <p className="muted">{t('intro')}</p>
 
       {setupIssues.length > 0 && (
         <div className="setup-warning" role="alert">
-          <strong>Setup incomplete</strong>
+          <strong>{t('setupIncomplete')}</strong>
           <ul>
             {setupIssues.map((issue) => (
               <li key={issue.key}>{issue.message}</li>
             ))}
           </ul>
-          <span className="muted small">Fix these, then click Refresh below to re-check.</span>
+          <span className="muted small">{t('setupHint')}</span>
         </div>
       )}
 
@@ -216,15 +226,15 @@ export function LeaseAbstraction() {
                 style={progress.percent !== undefined ? { width: `${progress.percent}%` } : undefined}
               />
             </div>
-            <p className="muted small">Keep this tab open until processing finishes.</p>
+            <p className="muted small">{t('keepTabOpen')}</p>
           </div>
         ) : (
           <>
             <p>
-              <strong>Drag and drop PDF files here</strong> or
+              <strong>{t('dropHere')}</strong> {t('dropOr')}
             </p>
-            <button className="btn" onClick={() => inputRef.current?.click()}>Choose PDF</button>
-            <p className="muted small">PDF only, up to 50 MB each. Digital and scanned files are supported.</p>
+            <button className="btn" onClick={() => inputRef.current?.click()}>{t('choosePdf')}</button>
+            <p className="muted small">{t('dropHint')}</p>
           </>
         )}
         <input
@@ -239,31 +249,31 @@ export function LeaseAbstraction() {
       {uploadError && <p className="error">{uploadError}</p>}
 
       <div className="section-header">
-        <h2>Uploaded files</h2>
+        <h2>{t('uploadedFiles')}</h2>
         <div className="section-actions">
-          {lastRefreshed && <span className="muted small">Updated {lastRefreshed.toLocaleTimeString()}</span>}
-          <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={refreshing} title="Reload the uploaded files table">
+          {lastRefreshed && <span className="muted small">{t('updatedAt', { time: formatTime(lastRefreshed) })}</span>}
+          <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={refreshing} title={t('refreshTitle')}>
             <span className={`refresh-icon${refreshing ? ' spinning' : ''}`} aria-hidden="true">⟳</span>
-            {refreshing ? 'Refreshing…' : 'Refresh'}
+            {refreshing ? t('refreshing') : t('refresh')}
           </button>
         </div>
       </div>
       {loadError && <p className="error">{loadError}</p>}
       {loading ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{tc('loading')}</p>
       ) : files.length === 0 ? (
-        <p className="muted">No files uploaded yet.</p>
+        <p className="muted">{t('noFiles')}</p>
       ) : (
         <div className="table-wrap">
           <table className="table files-table">
             <thead>
               <tr>
-                <th>File</th>
-                <th>Type</th>
-                <th>Document</th>
-                <th>Effective</th>
-                <th>Tenant</th>
-                <th>Premises</th>
+                <th>{t('colFile')}</th>
+                <th>{t('colType')}</th>
+                <th>{t('colDocument')}</th>
+                <th>{t('colEffective')}</th>
+                <th>{t('colTenant')}</th>
+                <th>{t('colPremises')}</th>
                 <th />
                 <th />
               </tr>
@@ -279,26 +289,26 @@ export function LeaseAbstraction() {
                 <td rowSpan={span} className="file-cell">
                   <button
                     className="file-name"
-                    onClick={() => openStoredPdf(file.storage_path).catch((e) => dialog.alert({ title: 'Could not open the PDF', message: e.message }))}
-                    title="Open the original PDF"
+                    onClick={() => openStoredPdf(file.storage_path).catch((e) => dialog.alert({ title: t('openPdfFailed'), message: e.message }))}
+                    title={t('openPdfTitle')}
                   >
                     {file.file_name}
                   </button>
                   <div className="file-badges">
                     <StatusBadge file={file} busy={busy} />
                     {file.is_scanned ? (
-                      <span className="badge badge-ocr" title={`${file.ocr_pages} page(s) converted with OCR`}>
-                        Scanned (OCR {file.ocr_pages}p)
+                      <span className="badge badge-ocr" title={tp('ocrPagesTitle', file.ocr_pages)}>
+                        {t('scannedBadge', { count: formatNumber(file.ocr_pages) })}
                       </span>
                     ) : (
-                      <span className="badge">Digital</span>
+                      <span className="badge">{t('digitalBadge')}</span>
                     )}
                   </div>
                   <div className="muted small">
-                    {file.page_count} {file.page_count === 1 ? 'page' : 'pages'} · {new Date(file.created_at).toLocaleString()}
+                    {tp('pages', file.page_count)} · {formatDateTime(file.created_at)}
                   </div>
                   <UsageSummary runs={usageByFile.get(file.id) ?? []} />
-                  {busy && <div className="muted small stage-detail">{describeStage(busy).text}</div>}
+                  {busy && <div className="muted small stage-detail">{describeStage(busy, t).text}</div>}
                   {!busy && file.status === 'failed' && file.error && <div className="error small">{file.error}</div>}
                 </td>
               )
@@ -307,24 +317,24 @@ export function LeaseAbstraction() {
                 <td rowSpan={span} className="actions file-actions">
                   {busy ? (
                     <button className="btn btn-ghost btn-sm" disabled>
-                      <Spinner /> {BUSY_LABELS[busy.stage]}…
+                      <Spinner /> {t(`busy_${busy.stage}`)}…
                     </button>
                   ) : file.status === 'failed' || stalled ? (
-                    <button className="btn btn-ghost btn-sm" onClick={() => retry(file)}>Retry</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => retry(file)}>{tc('retry')}</button>
                   ) : (
                     file.status === 'completed' && (
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={() => retry(file, true)}
-                        title="Run the AI analysis again and replace this file's documents and clauses"
+                        title={t('reanalyzeTitleAttr')}
                       >
-                        Re-analyze
+                        {t('reanalyze')}
                       </button>
                     )
                   )}
-                  <button className="btn btn-ghost btn-sm" onClick={() => setLogFileId(file.id)}>Log</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setLogFileId(file.id)}>{t('log')}</button>
                   <button className="btn btn-ghost btn-sm danger" onClick={() => remove(file)} disabled={!!busy || isUploading}>
-                    Delete
+                    {tc('delete')}
                   </button>
                 </td>
               )
@@ -336,8 +346,8 @@ export function LeaseAbstraction() {
                       {fileCell}
                       <td colSpan={6} className="muted doc-empty-cell">
                         {FINAL_STATUSES.has(file.status) && !busy
-                          ? 'No lease documents were found in this file.'
-                          : 'Documents appear here once processing finishes.'}
+                          ? t('noDocumentsFound')
+                          : t('documentsPending')}
                       </td>
                       {fileActions}
                     </tr>
@@ -371,56 +381,51 @@ export function LeaseAbstraction() {
 
 /** Token totals for a file, with each Claude request listed in the tooltip. */
 function UsageSummary({ runs }: { runs: AiUsage[] }) {
+  const { t, tp } = useT(abstraction)
   if (!runs.length) return null
   const input = runs.reduce((n, u) => n + totalInputTokens(u), 0)
   const output = runs.reduce((n, u) => n + u.output_tokens, 0)
   const detail = runs
     .map((u) => {
       const cache = u.cache_read_input_tokens || u.cache_creation_input_tokens
-        ? ` (cache: ${formatTokens(u.cache_read_input_tokens)} read, ${formatTokens(u.cache_creation_input_tokens)} written)`
+        ? t('usageCache', { read: formatTokens(u.cache_read_input_tokens), written: formatTokens(u.cache_creation_input_tokens) })
         : ''
-      const served = u.served_by && u.served_by !== u.model ? `, served by ${u.served_by}` : ''
-      return `${new Date(u.created_at).toLocaleString()} · ${PROCESS_LABELS[u.process]} · ${u.model}${served}\n  ${totalInputTokens(u).toLocaleString()} input${cache}, ${u.output_tokens.toLocaleString()} output`
+      const served = u.served_by && u.served_by !== u.model ? t('usageServedBy', { name: u.served_by }) : ''
+      const line = t('usageLine', { input: formatNumber(totalInputTokens(u)), cache, output: formatNumber(u.output_tokens) })
+      return `${formatDateTime(u.created_at)} · ${PROCESS_LABELS[u.process]} · ${u.model}${served}\n  ${line}`
     })
     .join('\n')
   return (
     <div className="muted small usage-summary" title={detail}>
-      Tokens: {formatTokens(input)} in · {formatTokens(output)} out
-      {runs.length > 1 && ` · ${runs.length} runs`}
+      {t('usageTokens', { input: formatTokens(input), output: formatTokens(output) })}
+      {runs.length > 1 && ` · ${tp('usageRuns', runs.length)}`}
     </div>
   )
 }
 
 function Spinner() {
-  return <span className="spinner" role="status" aria-label="Processing" />
-}
-
-const BUSY_LABELS: Record<Stage['stage'], string> = {
-  retrying: 'Retrying',
-  reanalyzing: 'Re-analyzing',
-  extracting: 'Extracting text',
-  uploading: 'Uploading',
-  analyzing: 'Analyzing',
-  splitting: 'Splitting',
+  const { t } = useT(abstraction)
+  return <span className="spinner" role="status" aria-label={t('processing')} />
 }
 
 function StatusBadge({ file, busy }: { file: LeaseFile; busy?: Stage }) {
+  const { t } = useT(abstraction)
   const pending = (label: string) => (
     <span className="badge badge-pending">
       <Spinner /> {label}
     </span>
   )
-  if (busy) return pending(BUSY_LABELS[busy.stage])
+  if (busy) return pending(t(`busy_${busy.stage}`))
   switch (file.status) {
     case 'completed':
-      return <span className="badge badge-success">✓ Completed</span>
+      return <span className="badge badge-success">{t('completed')}</span>
     case 'failed':
-      return <span className="badge badge-error">✕ Failed</span>
+      return <span className="badge badge-error">{t('failed')}</span>
     case 'analyzing':
-      return pending('Analyzing')
+      return pending(t('busy_analyzing'))
     case 'analyzed':
-      return pending('Splitting')
+      return pending(t('busy_splitting'))
     default:
-      return pending('Processing')
+      return pending(t('processing'))
   }
 }

@@ -3,11 +3,14 @@ import { Link } from 'react-router-dom'
 import type { Lease } from '../lib/leases'
 import { parseDate } from '../lib/leaseStatus'
 import { fetchSystemLease, SOURCE_LABELS, type SavedSystemLease } from '../lib/imports'
+import { formatDate, formatNumber, useT } from '../i18n'
+import { common } from '../i18n/messages/common'
+import { systemRecord } from '../i18n/messages/systemRecord'
 
 type Status = 'match' | 'mismatch' | 'check'
 type Row = { label: string; lease: string | null; system: string | null; status: Status | null }
 
-const usd = (n: number | null) => (n === null ? null : n.toLocaleString(undefined, { style: 'currency', currency: 'USD' }))
+const usd = (n: number | null) => (n === null ? null : formatNumber(n, { style: 'currency', currency: 'USD' }))
 
 /** First amount in free text, e.g. "$4,500 per month" -> 4500. */
 function amount(text: string | null | undefined): number | null {
@@ -45,6 +48,8 @@ function compareDates(label: string, leaseText: string | null, system: string | 
 
 /** The imported system record for this lease family, compared with the lease terms as amended. */
 export function SystemRecordPanel({ family }: { family: Lease[] }) {
+  const { t, tp } = useT(systemRecord)
+  const { t: tc } = useT(common)
   const [record, setRecord] = useState<SavedSystemLease | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const ids = family.map((l) => l.id).join(',')
@@ -53,13 +58,21 @@ export function SystemRecordPanel({ family }: { family: Lease[] }) {
     fetchSystemLease(ids ? ids.split(',') : []).then(setRecord, (e) => setError(e.message))
   }, [ids])
 
-  if (error) return <p className="error small">Could not load system records: {error}</p>
-  if (record === undefined) return <p className="muted small">Loading…</p>
+  if (error) return <p className="error small">{t('loadError', { error })}</p>
+  if (record === undefined) return <p className="muted small">{tc('loading')}</p>
   if (!record) {
     return (
       <p className="muted panel-empty">
-        No system record matched to this lease. <Link to="/import" className="link">Import a rent roll</Link> from Yardi, MRI or CSV
-        to compare.
+        {t('noRecord')}{' '}
+        {t('importPrompt')
+          .split(/(\{link\})/)
+          .map((part, i) =>
+            part === '{link}' ? (
+              <Link key={i} to="/import" className="link">{t('importLink')}</Link>
+            ) : (
+              part
+            ),
+          )}
       </p>
     )
   }
@@ -79,18 +92,18 @@ export function SystemRecordPanel({ family }: { family: Lease[] }) {
   const areaText = latest('rentable_area')
 
   const rows: Row[] = [
-    { label: 'Tenant', lease: tenant, system: record.tenant, status: null },
-    compareDates('Lease start', latest('commencement_date'), record.lease_start),
-    compareDates('Lease end', latest('expiration_date'), record.lease_end),
-    compareNumbers('Area (sq ft)', areaText, amount(areaText), record.area_sqft, (n) => (n === null ? null : n.toLocaleString())),
-    compareNumbers('Base rent / month', rentText, monthlyRent(rentText), record.monthly_base_rent),
-    compareNumbers('Security deposit', depositText, amount(depositText), record.security_deposit),
+    { label: t('tenant'), lease: tenant, system: record.tenant, status: null },
+    compareDates(t('leaseStart'), latest('commencement_date'), record.lease_start),
+    compareDates(t('leaseEnd'), latest('expiration_date'), record.lease_end),
+    compareNumbers(t('area'), areaText, amount(areaText), record.area_sqft, (n) => (n === null ? null : formatNumber(n))),
+    compareNumbers(t('baseRentMonth'), rentText, monthlyRent(rentText), record.monthly_base_rent),
+    compareNumbers(t('securityDeposit'), depositText, amount(depositText), record.security_deposit),
   ]
   const charges: Array<[string, number | null]> = [
-    ['CAM / month', record.cam_monthly],
-    ['Tax / month', record.tax_monthly],
-    ['Insurance / month', record.insurance_monthly],
-    ['Other / month', record.other_monthly],
+    [t('camMonth'), record.cam_monthly],
+    [t('taxMonth'), record.tax_monthly],
+    [t('insuranceMonth'), record.insurance_monthly],
+    [t('otherMonth'), record.other_monthly],
   ]
   const mismatches = rows.filter((r) => r.status === 'mismatch').length
 
@@ -98,15 +111,15 @@ export function SystemRecordPanel({ family }: { family: Lease[] }) {
     <>
       <p className="muted small system-source">
         {SOURCE_LABELS[record.source]} · {[record.property, record.unit].filter(Boolean).join(' · ')}
-        {record.external_id && ` · ${record.external_id}`} · imported {new Date(record.created_at).toLocaleDateString()}
-        {mismatches > 0 && <span className="system-mismatch-count"> · {mismatches} mismatch{mismatches === 1 ? '' : 'es'}</span>}
+        {record.external_id && ` · ${record.external_id}`} · {t('imported', { date: formatDate(record.created_at) })}
+        {mismatches > 0 && <span className="system-mismatch-count"> · {tp('mismatches', mismatches)}</span>}
       </p>
       <table className="panel-table">
         <thead>
           <tr>
             <th />
-            <th>Lease</th>
-            <th>System</th>
+            <th>{t('colLease')}</th>
+            <th>{t('colSystem')}</th>
             <th />
           </tr>
         </thead>
@@ -119,24 +132,24 @@ export function SystemRecordPanel({ family }: { family: Lease[] }) {
               </td>
               <td className="nowrap">{r.system ?? <span className="muted">—</span>}</td>
               <td className="panel-num">
-                {r.status === 'match' && <span className="system-ok" title="Matches the lease">✓</span>}
-                {r.status === 'mismatch' && <span className="badge badge-error">Mismatch</span>}
-                {r.status === 'check' && <span className="muted small" title="Could not compare automatically">check</span>}
+                {r.status === 'match' && <span className="system-ok" title={t('matchesTitle')}>✓</span>}
+                {r.status === 'mismatch' && <span className="badge badge-error">{t('mismatch')}</span>}
+                {r.status === 'check' && <span className="muted small" title={t('checkTitle')}>{t('check')}</span>}
               </td>
             </tr>
           ))}
           {charges.map(([label, value]) => (
             <tr key={label}>
               <td className="panel-label">{label}</td>
-              <td className="muted small">billed charge</td>
+              <td className="muted small">{t('billedCharge')}</td>
               <td className="nowrap">{usd(value) ?? <span className="muted">—</span>}</td>
               <td />
             </tr>
           ))}
           {record.next_escalation_date && (
             <tr>
-              <td className="panel-label">Next increase</td>
-              <td className="muted small">in system</td>
+              <td className="panel-label">{t('nextIncrease')}</td>
+              <td className="muted small">{t('inSystem')}</td>
               <td className="nowrap">
                 {record.next_escalation_date}
                 {record.next_escalation_rent !== null && ` → ${usd(record.next_escalation_rent)}`}

@@ -3,14 +3,12 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DOC_TYPE_LABELS, formatTokens, type Lease } from '../lib/leases'
 import { useDialog } from '../components/Dialog'
+import { formatDateTime, formatNumber, useT } from '../i18n'
+import { chat as chatMessages } from '../i18n/messages/chat'
+import { common } from '../i18n/messages/common'
 import { askLeaseQuestion, deleteChat, fetchChat, listChats, saveChat, type ChatMessage, type LeaseChatSummary } from '../lib/chat'
 
-const SUGGESTIONS = [
-  'Which leases expire in the next 12 months?',
-  'What renewal options does each lease have, and when must notice be given?',
-  'Can the tenant assign or sublease without landlord consent?',
-  'How are operating expenses shared, and is there a cap?',
-]
+const SUGGESTIONS = ['suggestion1', 'suggestion2', 'suggestion3', 'suggestion4'] as const
 
 // Renders **bold** spans; everything else is shown as plain text.
 function renderText(text: string): ReactNode {
@@ -31,6 +29,8 @@ export function Chat() {
   const [historyError, setHistoryError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const dialog = useDialog()
+  const { t, tp } = useT(chatMessages)
+  const { t: tc } = useT(common)
   // The chat whose messages are in state, so reopening it doesn't refetch.
   const loadedChatId = useRef<string | null>(null)
 
@@ -97,7 +97,7 @@ export function Chat() {
         loadedChatId.current = created.id
         setUrl(created.id, leaseId)
       } catch (err) {
-        setHistoryError(`Could not save this chat: ${err instanceof Error ? err.message : String(err)}`)
+        setHistoryError(t('saveFailed', { error: err instanceof Error ? err.message : String(err) }))
       }
     }
 
@@ -121,7 +121,7 @@ export function Chat() {
       }
       setHistoryError(null)
     } catch (err) {
-      setHistoryError(`Could not save this chat: ${err instanceof Error ? err.message : String(err)}`)
+      setHistoryError(t('saveFailed', { error: err instanceof Error ? err.message : String(err) }))
     }
   }
 
@@ -129,9 +129,9 @@ export function Chat() {
 
   const removeChat = async (chat: LeaseChatSummary) => {
     const ok = await dialog.confirm({
-      title: 'Delete this chat?',
-      message: <>“{chat.title}” will be deleted. This can't be undone.</>,
-      confirmLabel: 'Delete',
+      title: t('deleteTitle'),
+      message: t('deleteMessage', { title: chat.title }),
+      confirmLabel: tc('delete'),
       danger: true,
     })
     if (!ok) return
@@ -166,20 +166,20 @@ export function Chat() {
     <main className="container wide chat-page">
       <div className="page-header">
         <div>
-          <h1>Ask LeaseIQ</h1>
-          <p className="muted">Ask anything about your leases. Answers are drawn from the lease text, with page references.</p>
+          <h1>{t('title')}</h1>
+          <p className="muted">{t('intro')}</p>
         </div>
         <div className="chat-toolbar">
           {answered.length > 0 && (
             <span
               className="muted small chat-usage-total"
-              title={`${chatInput.toLocaleString()} input and ${chatOutput.toLocaleString()} output tokens over ${answered.length} ${answered.length === 1 ? 'answer' : 'answers'}`}
+              title={tp('chatUsageTitle', answered.length, { input: formatNumber(chatInput), output: formatNumber(chatOutput) })}
             >
-              This chat: {formatTokens(chatInput)} in · {formatTokens(chatOutput)} out
+              {t('chatUsage', { input: formatTokens(chatInput), output: formatTokens(chatOutput) })}
             </span>
           )}
-          <select className="select" value={leaseId ?? ''} onChange={(e) => setScope(e.target.value)} aria-label="Documents to search">
-            <option value="">All documents</option>
+          <select className="select" value={leaseId ?? ''} onChange={(e) => setScope(e.target.value)} aria-label={t('documentsToSearch')}>
+            <option value="">{t('allDocuments')}</option>
             {leases.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.title} ({DOC_TYPE_LABELS[l.doc_type]})
@@ -193,19 +193,19 @@ export function Chat() {
       <div className="chat-layout">
         <aside className="chat-history card">
           <button className="btn btn-sm chat-new" onClick={newChat} disabled={busy}>
-            + New chat
+            {t('newChat')}
           </button>
           {chats.length === 0 ? (
-            <p className="muted small chat-history-empty">Your chats will appear here.</p>
+            <p className="muted small chat-history-empty">{t('historyEmpty')}</p>
           ) : (
             <ul className="chat-history-list">
               {chats.map((c) => (
                 <li key={c.id} className={c.id === chatId ? 'active' : undefined}>
                   <button className="chat-history-item" onClick={() => setUrl(c.id, c.lease_id)} disabled={busy} title={c.title}>
                     <span className="chat-history-title">{c.title}</span>
-                    <span className="muted small">{new Date(c.updated_at).toLocaleString()}</span>
+                    <span className="muted small">{formatDateTime(c.updated_at)}</span>
                   </button>
-                  <button className="chat-history-delete" onClick={() => removeChat(c)} disabled={busy} aria-label={`Delete chat ${c.title}`} title="Delete chat">
+                  <button className="chat-history-delete" onClick={() => removeChat(c)} disabled={busy} aria-label={t('deleteChatLabel', { title: c.title })} title={t('deleteChat')}>
                     ×
                   </button>
                 </li>
@@ -218,11 +218,11 @@ export function Chat() {
           <div className="chat-log">
             {messages.length === 0 && (
               <div className="chat-empty">
-                <p className="muted">Try one of these:</p>
+                <p className="muted">{t('tryThese')}</p>
                 <div className="chat-suggestions">
-                  {SUGGESTIONS.map((s) => (
-                    <button key={s} className="chat-suggestion" onClick={() => void send(s)}>
-                      {s}
+                  {SUGGESTIONS.map((key) => (
+                    <button key={key} className="chat-suggestion" onClick={() => void send(t(key))}>
+                      {t(key)}
                     </button>
                   ))}
                 </div>
@@ -235,17 +235,17 @@ export function Chat() {
                 {m.usage && (
                 <div
                   className="muted small chat-usage"
-                  title={`${m.usage.input.toLocaleString()} input tokens · ${m.usage.output.toLocaleString()} output tokens`}
+                  title={t('messageUsageTitle', { input: formatNumber(m.usage.input), output: formatNumber(m.usage.output) })}
                 >
-                  {formatTokens(m.usage.input)} in · {formatTokens(m.usage.output)} out
+                  {t('messageUsage', { input: formatTokens(m.usage.input), output: formatTokens(m.usage.output) })}
                 </div>
               )}
               {m.sources && m.sources.length > 0 && (
                   <div className="chat-sources">
-                    <span className="muted small">Sources:</span>
+                    <span className="muted small">{t('sources')}</span>
                     {m.sources.map((s) => (
                       <Link key={`${s.leaseId}:${s.page}`} to={`/leases/${s.leaseId}`} className="chat-source" title={DOC_TYPE_LABELS[s.docType]}>
-                        {s.title}, p. {s.page}
+                        {t('sourcePage', { title: s.title, page: s.page })}
                       </Link>
                     ))}
                   </div>
@@ -256,7 +256,7 @@ export function Chat() {
             {busy && (
               <div className="chat-msg chat-assistant">
                 <div className="chat-bubble muted">
-                  <span className="spinner" role="status" aria-label="Working" /> Searching your leases…
+                  <span className="spinner" role="status" aria-label={t('working')} /> {t('searching')}
                 </div>
               </div>
             )}
@@ -268,12 +268,12 @@ export function Chat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="Ask a question about your leases…"
+              placeholder={t('placeholder')}
               rows={2}
               disabled={busy}
             />
             <button className="btn" type="submit" disabled={busy || !input.trim()}>
-              Send
+              {t('send')}
             </button>
           </form>
         </div>
