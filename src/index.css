@@ -352,6 +352,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .files-table th, .files-table td { padding: 0.65rem 0.6rem; }
 .file-cell { min-width: 11rem; max-width: 15rem; }
 .premises-cell { max-width: 12rem; }
+.files-table .doc-title { overflow-wrap: anywhere; }
+/* Stacked so the table fits its container: [Text][PDF] / View amendments / + Amendment */
+.files-table .doc-actions { width: 1%; text-align: left; }
+.doc-actions > .btn, .doc-actions-row { display: flex; width: 100%; }
+.doc-actions > .btn { justify-content: center; margin: 0.35rem 0 0 !important; }
+.doc-actions-row { gap: 0.35rem; }
+.doc-actions-row .btn { flex: 1; margin: 0 !important; }
 .file-name {
   background: none; border: none; padding: 0; font: inherit; font-weight: 600; color: var(--text);
   text-align: left; cursor: pointer; word-break: break-word;
@@ -366,9 +373,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .doc-link:hover { color: var(--accent); text-decoration: underline; }
 .doc-empty-cell { vertical-align: middle !important; }
 .actions { white-space: nowrap; text-align: right; }
-.actions .btn + .btn { margin-left: 0.35rem; }
+.actions .btn + .btn, .actions .btn + input[hidden] + .btn { margin-left: 0.35rem; }
 .child-cell { padding-left: 1.5rem !important; }
 .tree-branch { color: var(--border-strong); margin-right: 0.4rem; }
+.doc-toggle { white-space: nowrap; }
+.doc-toggle-icon { display: inline-block; font-size: 0.7rem; transition: transform 0.15s; }
+.doc-toggle-icon.is-open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .doc-toggle-icon { transition: none; } }
 .details-row > td { background: var(--subtle); }
 .summary { margin: 0 0 0.75rem; }
 .abstract { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.25rem; margin: 0; }

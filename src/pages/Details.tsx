@@ -19,6 +19,7 @@ import { LeaseHistory } from '../components/LeaseHistory'
 import { CamReconciliation } from '../components/CamReconciliation'
 import { useDialog } from '../components/Dialog'
 import { SystemRecordPanel } from '../components/SystemRecordPanel'
+import { UploadAmendmentButton } from '../components/UploadAmendment'
 import { daysFromToday, latestExpiration, parseDate } from '../lib/leaseStatus'
 import { downloadLeaseReport, leaseSections } from '../lib/leaseReport'
 import {
@@ -305,8 +306,7 @@ export function Details() {
   const { t, tp, locale } = useT(details)
   const { t: tc } = useT(common)
 
-  useEffect(() => {
-    setLoading(true)
+  const load = () =>
     Promise.all([supabase.from('leases').select('*'), supabase.from('lease_files').select('*')]).then(
       ([leasesRes, filesRes]) => {
         const err = leasesRes.error ?? filesRes.error
@@ -316,6 +316,10 @@ export function Details() {
         setLoading(false)
       },
     )
+
+  useEffect(() => {
+    setLoading(true)
+    load()
   }, [id])
 
   const lease = leases.find((l) => l.id === id)
@@ -407,6 +411,7 @@ export function Details() {
             </div>
             <div className="dash-actions">
               <Link to={`/chat?lease=${lease.id}`} className="btn btn-sm">{t('askAboutLease')}</Link>
+              {main?.doc_type === 'main_lease' && <UploadAmendmentButton lease={main} onDone={load} />}
               <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} title={t('editTitle')}>{tc('edit')}</button>
               <button className="btn btn-ghost btn-sm" onClick={() => setViewing(lease)}>{t('text')}</button>
               <button

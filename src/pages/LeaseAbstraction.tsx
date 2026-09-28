@@ -124,6 +124,16 @@ export function LeaseAbstraction() {
     return () => clearInterval(t)
   }, [anyPending, load])
 
+  // Main leases whose amendments and linked documents are shown.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const toggleExpanded = (leaseId: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(leaseId)) next.add(leaseId)
+      return next
+    })
+  const fileNames = new Map(files.map((f) => [f.id, f.file_name]))
+
   const handleFiles = async (list: FileList | null) => {
     if (!list?.length || upload) return
     setUploadError(null)
@@ -279,7 +289,7 @@ export function LeaseAbstraction() {
               </tr>
             </thead>
             {files.map((file, i) => {
-              const docs = fileDocuments(file, leases)
+              const docs = fileDocuments(file, leases, expanded, fileNames)
               const busy = busyFiles[file.id]
               const isUploading = upload !== null && !FINAL_STATUSES.has(file.status)
               const stalled = !FINAL_STATUSES.has(file.status) && !busy && !isUploading
@@ -355,7 +365,7 @@ export function LeaseAbstraction() {
                     docs.map((entry, j) => (
                       <tr key={entry.lease.id}>
                         {j === 0 && fileCell}
-                        <DocumentCells entry={entry} onViewText={setViewing} />
+                        <DocumentCells entry={entry} onViewText={setViewing} onToggle={toggleExpanded} onAmendmentUploaded={load} />
                         {j === 0 && fileActions}
                       </tr>
                     ))

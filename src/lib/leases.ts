@@ -21,6 +21,8 @@ export type LeaseFile = {
   error: string | null
   created_at: string
   processed_at: string | null
+  /** Main lease this file was uploaded as an amendment for, if any. */
+  parent_lease_id: string | null
 }
 
 export type DocType =
@@ -298,11 +300,14 @@ async function savePages(fileId: string, pages: ExtractedPage[], log: FileLogger
   log.info('save-pages', 'All page text saved', { pages: rows.length, ms: elapsed(started) })
 }
 
-/** Full pipeline for a new upload: extract/OCR -> store -> AI analysis -> split. */
-export async function uploadLeaseFile(file: File, onStage: (s: Stage) => void): Promise<void> {
+/**
+ * Full pipeline for a new upload: extract/OCR -> store -> AI analysis -> split.
+ * With parentLeaseId, the file holds amendments (or other documents) for that main lease.
+ */
+export async function uploadLeaseFile(file: File, onStage: (s: Stage) => void, parentLeaseId: string | null = null): Promise<void> {
   const log = new FileLogger()
   const started = performance.now()
-  log.info('upload', `Upload started: ${file.name}`, { name: file.name, size: file.size, type: file.type })
+  log.info('upload', `Upload started: ${file.name}`, { name: file.name, size: file.size, type: file.type, parentLeaseId })
 
   if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
     log.error('validate', 'Rejected: not a PDF', { type: file.type })
@@ -345,6 +350,7 @@ export async function uploadLeaseFile(file: File, onStage: (s: Stage) => void): 
     is_scanned: ocrPages > 0,
     ocr_pages: ocrPages,
     status: 'processing',
+    parent_lease_id: parentLeaseId,
   })
   if (insertError) {
     log.error('db', `Creating file record failed: ${insertError.message}; removing uploaded PDF`)

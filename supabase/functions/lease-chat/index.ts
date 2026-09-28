@@ -15,11 +15,12 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 // Shares the API key settings with analyze-lease (gitignored; see config.example.ts there).
 import { config } from '../analyze-lease/config.ts'
 import { fallbackParams, resolveModel } from '../_shared/model.ts'
+import { compactText } from '../_shared/text.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '4'
+const FUNCTION_VERSION = '5'
 const MAX_TOOL_ROUNDS = 8
 const MAX_HISTORY = 20
 const MAX_MESSAGE_CHARS = 8000
@@ -303,7 +304,7 @@ async function runAnswerLoop(
       ],
       // The last round gets no tools, so Claude has to answer with what it found.
       ...(round < MAX_TOOL_ROUNDS ? { tools: TOOLS } : {}),
-      messages,
+      messages: withCacheBreakpoint(messages),
     // deno-lint-ignore no-explicit-any
     } as any)
     usage.add(message)
@@ -327,6 +328,18 @@ async function runAnswerLoop(
   }
 
   throw new Error('The assistant did not finish its answer.')
+}
+
+/**
+ * Marks the end of the conversation so far for prompt caching: each tool round
+ * resends every earlier message, and the next round then reads them from the
+ * cache (0.1x input price) instead of paying for them again.
+ */
+function withCacheBreakpoint(messages: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  const last = messages[messages.length - 1]
+  const blocks = typeof last.content === 'string' ? [{ type: 'text' as const, text: last.content }] : [...last.content]
+  blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } } as (typeof blocks)[number]
+  return [...messages.slice(0, -1), { ...last, content: blocks }]
 }
 
 // Pages Claude read in full come first, then search hits in the order found.
@@ -365,7 +378,7 @@ async function runTool(
     const hits = (data as any[]).map((row) => {
       const lease = catalogue.get(row.lease_id)
       if (lease) addSource(lease, row.page_number, false)
-      return `<hit lease_id="${row.lease_id}" document="${row.lease_title}" type="${row.doc_type}" page="${row.page_number}">\n${row.excerpt}\n</hit>`
+      return `<hit lease_id="${row.lease_id}" document="${row.lease_title}" type="${row.doc_type}" page="${row.page_number}">\n${compactText(row.excerpt ?? '')}\n</hit>`
     })
     return result(hits.join('\n'))
   }
@@ -388,7 +401,7 @@ async function runTool(
 
     const pages = (data ?? []).map((p) => {
       addSource(lease, p.page_number, true)
-      return `<page document="${lease.title}" number="${p.page_number}">\n${p.text}\n</page>`
+      return `<page document="${lease.title}" number="${p.page_number}">\n${compactText(p.text)}\n</page>`
     })
     return result(pages.join('\n') || 'Those pages have no text.')
   }

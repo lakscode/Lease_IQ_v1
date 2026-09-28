@@ -13,11 +13,12 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 // Shares the API key settings with analyze-lease (gitignored; see config.example.ts there).
 import { config } from '../analyze-lease/config.ts'
 import { fallbackParams, resolveModel } from '../_shared/model.ts'
+import { compactText } from '../_shared/text.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '4'
+const FUNCTION_VERSION = '5'
 const MAX_INPUT_CHARS = 2_500_000
 // Interface languages of the app (src/i18n/index.tsx); the insight text is written in the requester's.
 const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian']
@@ -255,7 +256,7 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
       .lte('page_number', doc.page_end)
       .order('page_number')
     if (error) throw new Error(`Loading page text failed: ${error.message}`)
-    const text = (pages ?? []).map((p) => `--- Page ${p.page_number} ---\n${p.text.trim() || '[no text on this page]'}`).join('\n\n')
+    const text = (pages ?? []).map((p) => `--- Page ${p.page_number} ---\n${compactText(p.text) || '[no text on this page]'}`).join('\n\n')
     parts.push(
       `<document index="${index}" type="${doc.doc_type}" title="${doc.title}" effective_date="${doc.effective_date ?? ''}">\n${text}\n</document>`,
     )

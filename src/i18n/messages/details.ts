@@ -3,6 +3,9 @@ import { defineMessages } from '..'
 // Details page and the small lease components it uses (clauses, documents, editor, history, text viewer).
 export const details = defineMessages({
   en: {
+    viewAmendments: 'View amendments ({count})',
+    hideAmendments: 'Hide amendments',
+    fromFile: 'from {file}',
     pageSingle: 'p. {page}',
     pageRange: 'p. {start}–{end}',
     citationWithTitle: '{title}, p. {page}',
@@ -118,6 +121,9 @@ export const details = defineMessages({
     noTextOnPage: '(no text on this page)',
   },
   de: {
+    viewAmendments: 'Nachträge anzeigen ({count})',
+    hideAmendments: 'Nachträge ausblenden',
+    fromFile: 'aus {file}',
     pageSingle: 'S. {page}',
     pageRange: 'S. {start}–{end}',
     citationWithTitle: '{title}, S. {page}',
@@ -224,6 +230,9 @@ export const details = defineMessages({
     noTextOnPage: '(kein Text auf dieser Seite)',
   },
   es: {
+    viewAmendments: 'Ver modificaciones ({count})',
+    hideAmendments: 'Ocultar modificaciones',
+    fromFile: 'de {file}',
     pageSingle: 'pág. {page}',
     pageRange: 'págs. {start}–{end}',
     citationWithTitle: '{title}, pág. {page}',
@@ -330,6 +339,9 @@ export const details = defineMessages({
     noTextOnPage: '(sin texto en esta página)',
   },
   pt: {
+    viewAmendments: 'Ver aditivos ({count})',
+    hideAmendments: 'Ocultar aditivos',
+    fromFile: 'de {file}',
     pageSingle: 'p. {page}',
     pageRange: 'p. {start}–{end}',
     citationWithTitle: '{title}, p. {page}',
@@ -436,6 +448,9 @@ export const details = defineMessages({
     noTextOnPage: '(sem texto nesta página)',
   },
   it: {
+    viewAmendments: 'Vedi modifiche ({count})',
+    hideAmendments: 'Nascondi modifiche',
+    fromFile: 'da {file}',
     pageSingle: 'pag. {page}',
     pageRange: 'pagg. {start}–{end}',
     citationWithTitle: '{title}, pag. {page}',

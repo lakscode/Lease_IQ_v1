@@ -14,6 +14,7 @@ import clauseModelJson from './clause_model.json' with { type: 'json' }
 // Gitignored; copy config.example.ts. Deployed together with this function.
 import { config } from './config.ts'
 import { fallbackParams, resolveModel } from '../_shared/model.ts'
+import { compactText } from '../_shared/text.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
@@ -45,7 +46,7 @@ const ABSTRACT_FIELDS = [
 
 // Bump when changing this function, together with EXPECTED_FUNCTION_VERSION in
 // src/lib/health.ts; returned in the x-function-version header.
-const FUNCTION_VERSION = '11'
+const FUNCTION_VERSION = '13'
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -100,6 +101,7 @@ Your job:
    - parent_index: the 0-based index, in your documents array, of that main lease when it is in this PDF; otherwise -1.
    - existing_parent_id: when the main lease is not in this PDF, the id of the matching lease from <existing_main_leases>, matched on landlord, tenant and premises; otherwise an empty string. Only use an id from that list.
    - Use -1 and an empty string when you cannot identify the main lease. Main leases always use -1 and an empty string.
+   - When <target_main_lease> is given, the user uploaded this PDF as an amendment, addendum or other document for that lease. Link every document that is not a main_lease to it (existing_parent_id = its id), unless the document plainly belongs to a main lease inside this PDF. Only classify a document as main_lease if it really is a separate original lease.
 4. Abstract the key terms of each document into the abstract fields. For amendments and other child documents, record only terms the document itself sets or changes, and describe what it changes in changes_made. Use an empty string for any abstract field the document does not state; never guess. Keep values concise and quote amounts, dates and areas as written. effective_date must be YYYY-MM-DD, or an empty string when unknown.
 5. renewal_options_start and renewal_notification_window_start are calculated dates, formatted YYYY-MM-DD. Work them out from the document's stated terms (for a child document, from the expiration date as it sets or changes it); use an empty string when the document grants no renewal option or the dates cannot be calculated from what it states.
    - renewal_options_start: the date the first renewal term would begin, normally the day after the current term's expiration date. If the renewal term is stated to start on another date, use that.
@@ -230,7 +232,7 @@ Deno.serve(async (req) => {
 
   const { data: file, error: fileError } = await supabase
     .from('lease_files')
-    .select('id, page_count, status, file_name')
+    .select('id, page_count, status, file_name, parent_lease_id')
     .eq('id', fileId)
     .maybeSingle()
   if (fileError) {
@@ -275,7 +277,7 @@ Deno.serve(async (req) => {
 
   activeJobs.set(fileId, { log, supabase, startedAt: started })
   EdgeRuntime.waitUntil(
-    analyzeFile(supabase, fileId, file.page_count, model, recordUsage, log)
+    analyzeFile(supabase, fileId, file.page_count, file.parent_lease_id ?? null, model, recordUsage, log)
       .then(() => log('info', 'done', 'Analysis finished', { totalMs: elapsed(started) }))
       .catch(async (err) => {
         await log('error', 'failed', `Analysis failed: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
@@ -329,6 +331,7 @@ async function analyzeFile(
   supabase: SupabaseClient,
   fileId: string,
   pageCount: number,
+  targetId: string | null,
   model: string,
   recordUsage: RecordUsage,
   log: Log,
@@ -365,7 +368,7 @@ async function analyzeFile(
   })
 
   const pageText = pages
-    .map((p) => `=== Page ${p.page_number}${p.is_ocr ? ' (OCR)' : ''} ===\n${p.text.trim() || '[no text on this page]'}`)
+    .map((p) => `=== Page ${p.page_number}${p.is_ocr ? ' (OCR)' : ''} ===\n${compactText(p.text) || '[no text on this page]'}`)
     .join('\n\n')
   await log('info', 'prompt', `Prompt built: ${pageText.length} chars (~${Math.round(pageText.length / 4)} tokens)`, {
     chars: pageText.length,
@@ -375,9 +378,23 @@ async function analyzeFile(
     throw new Error('This file is too large to analyze in one pass. Split it into smaller PDFs and upload them separately.')
   }
 
-  const documents = await callClaude(pageText, pages.length, existingMains ?? [], model, recordUsage, log)
+  // Set when the file was uploaded as an amendment for a specific lease.
+  let target: Record<string, unknown> | null = null
+  if (targetId) {
+    const { data } = await supabase
+      .from('leases')
+      .select('id, title, landlord, tenant, premises, effective_date')
+      .eq('id', targetId)
+      .eq('doc_type', 'main_lease')
+      .maybeSingle()
+    target = data
+    await log(target ? 'info' : 'warn', 'target', target ? `Uploaded as an amendment for "${data!.title}"` : 'Target main lease not found; linking by matching', { targetId })
+  }
+  const mains = [...(target ? [target] : []), ...(existingMains ?? []).filter((m) => m.id !== target?.id)]
 
-  const { rows, links } = buildLeaseRows(documents, pageCount || pages.length, new Set((existingMains ?? []).map((m) => m.id)))
+  const documents = await callClaude(pageText, pages.length, mains, target, model, recordUsage, log)
+
+  const { rows, links } = buildLeaseRows(documents, pageCount || pages.length, new Set(mains.map((m) => m.id as string)), (target?.id as string | undefined) ?? null)
   await log('info', 'build-rows', `Prepared ${rows.length} document record(s)`, { links })
   const unlinked = rows.filter((r) => r.doc_type !== 'main_lease' && r.parent_id === null)
   if (unlinked.length) {
@@ -465,6 +482,7 @@ async function callClaude(
   pageText: string,
   pageCount: number,
   existingMains: Array<Record<string, unknown>>,
+  target: Record<string, unknown> | null,
   model: string,
   recordUsage: RecordUsage,
   log: Log,
@@ -497,7 +515,8 @@ async function callClaude(
       {
         role: 'user',
         content:
-          `<existing_main_leases>\n${JSON.stringify(existingMains)}\n</existing_main_leases>\n\n` +
+          (target ? `<target_main_lease>\n${JSON.stringify(target)}\n</target_main_lease>\n\n` : '') +
+          `<existing_main_leases>\n${JSON.stringify(existingMains, (_k, v) => (v === null || v === '' ? undefined : v))}\n</existing_main_leases>\n\n` +
           `<pdf page_count="${pageCount}">\n${pageText}\n</pdf>`,
       },
     ],
@@ -591,7 +610,7 @@ type LeaseRow = {
 
 type LinkNote = { title: string; type: string; pages: string; linkedBy: string; parentId: string | null; adjusted?: string }
 
-function buildLeaseRows(docs: ClaudeDocument[], pageCount: number, existingIds: Set<string>) {
+function buildLeaseRows(docs: ClaudeDocument[], pageCount: number, existingIds: Set<string>, targetId: string | null) {
   const clamp = (n: number) => Math.min(Math.max(Math.trunc(n) || 1, 1), pageCount)
   const ids = docs.map(() => crypto.randomUUID())
   const isoDate = (d: string | undefined) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d)) ? d : null)
@@ -615,6 +634,9 @@ function buildLeaseRows(docs: ClaudeDocument[], pageCount: number, existingIds: 
       } else if (doc.existing_parent_id && existingIds.has(doc.existing_parent_id)) {
         parentId = doc.existing_parent_id
         linkedBy = 'main lease from an earlier upload'
+      } else if (targetId) {
+        parentId = targetId
+        linkedBy = 'lease the file was uploaded for'
       } else {
         // Fall back to the closest main lease earlier in the same file.
         for (let j = i - 1; j >= 0; j--) {
