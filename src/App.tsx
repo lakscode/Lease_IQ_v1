@@ -15,6 +15,7 @@ import { Details } from './pages/Details'
 import { LeaseOverview } from './pages/LeaseOverview'
 import { Chat } from './pages/Chat'
 import { Import } from './pages/Import'
+import { Reports } from './pages/Reports'
 
 export default function App() {
   return (
@@ -73,6 +74,14 @@ export default function App() {
                 element={
                   <ProtectedRoute>
                     <Import />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <ProtectedRoute>
+                    <Reports />
                   </ProtectedRoute>
                 }
               />

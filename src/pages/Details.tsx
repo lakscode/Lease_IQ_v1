@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
   DOC_TYPE_LABELS,
@@ -296,6 +296,7 @@ function UsagePanel({ fileId }: { fileId: string }) {
 
 export function Details() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [leases, setLeases] = useState<Lease[]>([])
   const [files, setFiles] = useState<LeaseFile[]>([])
   const [loading, setLoading] = useState(true)
@@ -432,7 +433,25 @@ export function Details() {
             </div>
           </div>
           <p>
-            <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>{' '}
+            {family.length > 1 ? (
+              <select
+                className="select doc-picker"
+                value={lease.id}
+                onChange={(e) => navigate(`/leases/${e.target.value}`)}
+                aria-label={t('documentPicker')}
+                title={t('documentPicker')}
+              >
+                {family.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {DOC_TYPE_LABELS[doc.doc_type]}
+                    {doc.effective_date ? ` · ${doc.effective_date}` : ''}
+                    {doc.doc_type !== 'main_lease' ? ` · ${doc.title}` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className={`badge badge-${lease.doc_type}`}>{DOC_TYPE_LABELS[lease.doc_type]}</span>
+            )}{' '}
             {t('pagesOfFile', { pages: pages(lease, t), file: file?.file_name ?? t('unknownFile') })}
             {lease.summary && <> · {lease.summary}</>}
             {lease.edited_at && <span className="muted small"> · {t('editedAt', { date: formatDateTime(lease.edited_at) })}</span>}
