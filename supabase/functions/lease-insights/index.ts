@@ -1,7 +1,8 @@
 // Finds revenue and risk opportunities in a lease family: the main lease and
 // the amendments, addenda and letters linked to it. Claude reads the full text
 // of every document and assesses a fixed list of categories (CATEGORIES), and
-// extracts the CAM reconciliation terms used by the calculator on the Details page.
+// extracts the CAM reconciliation terms and the base rent schedule used by the
+// CAM calculator and the rent audit on the Details page.
 //
 // POST { leaseId } -> 202 { familyId }. Work continues in the background and
 // the result is written to lease_insights (keyed by the family's main lease);
@@ -18,7 +19,7 @@ import { compactText } from '../_shared/text.ts'
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '5'
+const FUNCTION_VERSION = '6'
 const MAX_INPUT_CHARS = 2_500_000
 // Interface languages of the app (src/i18n/index.tsx); the insight text is written in the requester's.
 const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian']
@@ -96,11 +97,45 @@ const CAM_FIELDS = {
   citations: CITATIONS_SCHEMA,
 }
 
+const PERIOD_FIELDS = { start_date: { type: 'string' }, end_date: { type: 'string' }, description: { type: 'string' } }
+
+const RENT_FIELDS = {
+  has_rent: { type: 'boolean' },
+  steps: {
+    type: 'array',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['start_date', 'end_date', 'monthly_rent', 'description'],
+      properties: { ...PERIOD_FIELDS, monthly_rent: { type: 'number' } },
+    },
+  },
+  abatements: {
+    type: 'array',
+    items: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['start_date', 'end_date', 'percent', 'description'],
+      properties: { ...PERIOD_FIELDS, percent: { type: 'number' } },
+    },
+  },
+  escalation_terms: { type: 'string' },
+  payment_terms: { type: 'string' },
+  late_fee_terms: { type: 'string' },
+  citations: CITATIONS_SCHEMA,
+}
+
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['items', 'cam'],
+  required: ['items', 'cam', 'rent'],
   properties: {
+    rent: {
+      type: 'object',
+      additionalProperties: false,
+      required: Object.keys(RENT_FIELDS),
+      properties: RENT_FIELDS,
+    },
     cam: {
       type: 'object',
       additionalProperties: false,
@@ -153,6 +188,14 @@ Also fill cam with the CAM / operating expense reconciliation terms as currently
 - reconciliation_deadline (as written) and reconciliation_deadline_days: days after the expense year ends by which the landlord must deliver the statement, 0 if not stated.
 - audit_rights: the tenant's audit window, any overcharge threshold and who pays for the audit.
 - citations: where these terms are.
+
+Also fill rent with the base (minimum / fixed) rent schedule as currently amended, used to audit what was billed each month (has_rent false and empty lists when no base rent is payable):
+- steps: every rent period of the term in date order, each with start_date and end_date (YYYY-MM-DD, end_date inclusive, periods contiguous) and monthly_rent: the monthly base rent for that period as a number. Convert annual amounts (divide by 12) and per-square-foot rates (multiply by the stated area) to a monthly amount. Resolve relative dates (e.g. "lease years 2-3") from the commencement date. Include renewal terms only once they have been exercised. For rent that isn't known yet (CPI or fair market reviews), include only the periods whose rent is known and describe the rest in escalation_terms. description: a short note, e.g. "Lease year 2, 3% increase" or "$28.00/RSF on 3,000 RSF".
+- abatements: free rent, abatement or reduced-rent periods, with the percent of base rent abated (100 for free rent; convert a fixed reduction to a percent of that period's rent). Empty when there are none.
+- escalation_terms: how and when base rent increases, in brief.
+- payment_terms: when rent is due (e.g. "Monthly in advance on the 1st, prorated for partial months").
+- late_fee_terms: late charges, interest and grace period, or an empty string.
+- citations: where the rent terms are.
 
 <system_record>, when present, is what the landlord's property management system (Yardi, MRI or a CSV rent roll) currently holds and bills for this lease: dates, area, monthly base rent, monthly CAM / tax / insurance charges, security deposit and next rent step. Compare it with the lease terms as amended and use it to decide items that would otherwise need data: under_billing (rent or charges billed below what the lease requires, escalations not applied), missing_cam_recovery (no or low CAM billed where the lease makes it recoverable), expired_concessions (still billing a reduced rent after the concession ended), security_deposit_changes (deposit held differs from the lease), rent_escalation (next step missing or different in the system) and amendment_not_reflected (system dates, area or rent still showing pre-amendment values). Quote both values when they differ. When there is no <system_record>, keep using "needs_data" for those.
 
@@ -289,7 +332,7 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
       { type: 'text', text: SYSTEM_PROMPT },
       {
         type: 'text',
-        text: `Write every free-text value (summary, detail, share_basis, the lists and the other CAM descriptions) in ${language}, even when the lease is in another language. Keep enum values, dates as YYYY-MM-DD, and amounts as written in the lease.`,
+        text: `Write every free-text value (summary, detail, share_basis, the lists, the other CAM descriptions and the rent descriptions and terms) in ${language}, even when the lease is in another language. Keep enum values, dates as YYYY-MM-DD, and amounts as written in the lease.`,
       },
     ],
     messages: [
@@ -312,7 +355,7 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
 
   const text = message.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('')
   // deno-lint-ignore no-explicit-any
-  let parsed: { items: Insight[]; cam: any }
+  let parsed: { items: Insight[]; cam: any; rent: any }
   try {
     parsed = JSON.parse(text)
   } catch {
@@ -337,9 +380,26 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
 
   const cam = parsed.cam ? { ...parsed.cam, citations: resolve(parsed.cam.citations ?? []) } : null
 
+  // Rent periods need valid dates to be audited; the rest are dropped.
+  const iso = (d: unknown) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '')
+  // deno-lint-ignore no-explicit-any
+  const periods = (list: any[] | undefined) =>
+    (list ?? [])
+      .map((p) => ({ ...p, start_date: iso(p.start_date), end_date: iso(p.end_date) }))
+      .filter((p) => p.start_date && (!p.end_date || p.end_date >= p.start_date))
+      .sort((a, b) => a.start_date.localeCompare(b.start_date))
+  const rent = parsed.rent
+    ? {
+        ...parsed.rent,
+        steps: periods(parsed.rent.steps).filter((s) => s.monthly_rent >= 0),
+        abatements: periods(parsed.rent.abatements).filter((a) => a.percent > 0),
+        citations: resolve(parsed.rent.citations ?? []),
+      }
+    : null
+
   const { error } = await supabase
     .from('lease_insights')
-    .update({ status: 'ready', error: null, items, cam, model: message.model ?? model, generated_at: new Date().toISOString() })
+    .update({ status: 'ready', error: null, items, cam, rent, model: message.model ?? model, generated_at: new Date().toISOString() })
     .eq('lease_id', root.id)
   if (error) throw new Error(`Saving insights failed: ${error.message}`)
 }

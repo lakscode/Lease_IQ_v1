@@ -17,6 +17,7 @@ import { TextViewer } from '../components/TextViewer'
 import { LeaseEditor } from '../components/LeaseEditor'
 import { LeaseHistory } from '../components/LeaseHistory'
 import { CamReconciliation } from '../components/CamReconciliation'
+import { RentAudit } from '../components/RentAudit'
 import { useDialog } from '../components/Dialog'
 import { SystemRecordPanel } from '../components/SystemRecordPanel'
 import { UploadAmendmentButton } from '../components/UploadAmendment'
@@ -103,7 +104,7 @@ function Terms({ rows }: { rows: Array<[string, ReactNode, string?]> }) {
 const INSIGHTS_POLL_MS = 4000
 
 /** Revenue and risk opportunities of the lease family, generated on demand. */
-function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: string }) {
+function InsightPanels({ familyId, familyIds, leaseId }: { familyId: string; familyIds: string[]; leaseId: string }) {
   const { t, tp } = useT(details)
   const [insights, setInsights] = useState<LeaseInsights | null | undefined>(undefined)
   const [requesting, setRequesting] = useState(false)
@@ -226,6 +227,9 @@ function InsightPanels({ familyId, leaseId }: { familyId: string; leaseId: strin
       {panel('risk', t('riskOpportunities'), '🛡️', 'yellow')}
       <Panel title={t('camReconciliation')} icon="🧾" color="purple" wide>
         <CamReconciliation familyId={familyId} terms={insights?.cam ?? null} ready={ready} />
+      </Panel>
+      <Panel title={t('rentAudit')} icon="🔍" color="yellow" wide>
+        <RentAudit familyId={familyId} familyIds={familyIds} terms={insights?.rent ?? null} ready={ready} />
       </Panel>
     </>
   )
@@ -535,7 +539,7 @@ export function Details() {
               <SystemRecordPanel family={family} />
             </Panel>
 
-            <InsightPanels familyId={main?.id ?? lease.id} leaseId={lease.id} />
+            <InsightPanels familyId={main?.id ?? lease.id} familyIds={family.map((d) => d.id)} leaseId={lease.id} />
 
             <Panel title={t('panelHistory')} icon="🕘" color="yellow" wide>
               <LeaseHistory leaseId={lease.id} version={lease.edited_at} />

@@ -4,6 +4,7 @@ import { errorData, FileLogger, type LogLevel } from './logger'
 import { formatNumber, localizedRecord, translator, type Vars } from '../i18n'
 import { common } from '../i18n/messages/common'
 import { libLeases } from '../i18n/messages/libLeases'
+import { requestInsights } from './insights'
 
 export const BUCKET = 'lease-files'
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -568,6 +569,31 @@ async function splitAndStore(
   log.info('status', 'File status set to completed')
 
   await indexForSearch(fileId, log)
+  await generateInsights(fileId, log)
+}
+
+/**
+ * Starts insight generation (opportunities, CAM terms and the rent schedule for
+ * the rent audit) for every lease family the file's documents belong to, so the
+ * Details page has them without clicking Generate. Runs in the background in the
+ * lease-insights Edge Function; a failure is logged but never fails the upload.
+ */
+async function generateInsights(fileId: string, log: FileLogger) {
+  const { data: docs, error } = await supabase.from('leases').select('id, parent_id').eq('file_id', fileId)
+  if (error) {
+    log.warn('insights', `Could not load documents for insights: ${error.message}`)
+    return
+  }
+  // One run per family, keyed by its main lease.
+  const families = [...new Set((docs ?? []).map((d) => d.parent_id ?? d.id))]
+  for (const leaseId of families) {
+    try {
+      await requestInsights(leaseId)
+      log.info('insights', 'Insight generation started', { leaseId })
+    } catch (e) {
+      log.warn('insights', `Insight generation could not start: ${e instanceof Error ? e.message : String(e)}`, { leaseId })
+    }
+  }
 }
 
 /**

@@ -699,6 +699,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .cam-save { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 .cam-save input { flex: 1; padding: 0.4rem 0.6rem; font-size: 0.875rem; }
 .cam > .cam-heading { margin-top: 1.5rem; }
+.cam-fields label .btn { align-self: flex-start; }
+.rent-audit-table { max-height: 26rem; overflow: auto; margin-top: 0.9rem; }
+.rent-audit-input { width: 8rem; padding: 0.3rem 0.5rem; font-size: 0.875rem; text-align: right; }
 
 /* ---------- Dialog ---------- */
 .dialog-backdrop {

@@ -46,7 +46,7 @@ const ABSTRACT_FIELDS = [
 
 // Bump when changing this function, together with EXPECTED_FUNCTION_VERSION in
 // src/lib/health.ts; returned in the x-function-version header.
-const FUNCTION_VERSION = '13'
+const FUNCTION_VERSION = '14'
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -403,7 +403,10 @@ async function analyzeFile(
     })
   }
 
-  // Re-analysis replaces whatever was extracted before.
+  // Re-analysis replaces whatever was extracted before; what hangs off the old
+  // documents is saved first and moved to the new ones after they are inserted.
+  const carried = await snapshotAttachments(supabase, fileId)
+
   stepStarted = Date.now()
   const { error: deleteError, count: deleted } = await supabase.from('leases').delete({ count: 'exact' }).eq('file_id', fileId)
   if (deleteError) throw new Error(`Removing previous results failed: ${deleteError.message}`)
@@ -420,6 +423,13 @@ async function analyzeFile(
     await log('info', 'save', `Saved ${batch.length} ${label} document(s)`, { ms: elapsed(stepStarted) })
   }
 
+  // Saved audits and links are extra; a failure here should not fail the analysis.
+  try {
+    await restoreAttachments(supabase, carried, rows, log)
+  } catch (err) {
+    await log('warn', 'carry-over', `Could not move saved data to the new documents: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
+  }
+
   // Clause labels are extra detail; a failure here should not fail the analysis.
   try {
     await classifyClauses(supabase, rows, pages, log)
@@ -430,6 +440,116 @@ async function analyzeFile(
   const { error: updateError } = await supabase.from('lease_files').update({ status: 'analyzed' }).eq('id', fileId)
   if (updateError) throw new Error(`Setting status to analyzed failed: ${updateError.message}`)
   await log('info', 'status', 'File status set to analyzed (browser will now split the PDF)')
+}
+
+// ---------- Carrying saved data over a re-analysis ----------
+
+// Tables keyed by a family's main lease whose rows are deleted with it (on delete cascade).
+const FAMILY_TABLES = ['rent_audits', 'cam_reconciliations', 'lease_insights'] as const
+
+type Attachments = {
+  tops: Array<{ id: string; title: string; doc_type: string; page_start: number }>
+  rows: Record<(typeof FAMILY_TABLES)[number], Array<Record<string, unknown>>>
+  // Documents in other files linked to one of this file's documents, and imported system records matched to one.
+  children: Array<{ id: string; parent_id: string }>
+  systemMatches: Array<{ id: string; matched_lease_id: string }>
+  uploadTargets: Array<{ id: string; parent_lease_id: string }>
+}
+
+async function snapshotAttachments(supabase: SupabaseClient, fileId: string): Promise<Attachments> {
+  const empty: Attachments = { tops: [], rows: { rent_audits: [], cam_reconciliations: [], lease_insights: [] }, children: [], systemMatches: [], uploadTargets: [] }
+  const { data: docs, error } = await supabase.from('leases').select('id, parent_id, title, doc_type, page_start').eq('file_id', fileId)
+  if (error || !docs?.length) return empty
+  const ids = docs.map((d) => d.id as string)
+  const tops = docs.filter((d) => d.parent_id === null) as Attachments['tops']
+  const topIds = tops.map((d) => d.id)
+  const read = async (table: string, column: string, keys: string[], columns = '*') => {
+    if (!keys.length) return []
+    const { data, error } = await supabase.from(table).select(columns).in(column, keys)
+    if (error) throw new Error(`Reading ${table} failed: ${error.message}`)
+    // deno-lint-ignore no-explicit-any
+    return (data ?? []) as any[]
+  }
+  const [rent, cam, insights, children, systemMatches, uploadTargets] = await Promise.all([
+    read('rent_audits', 'lease_id', topIds),
+    read('cam_reconciliations', 'lease_id', topIds),
+    read('lease_insights', 'lease_id', topIds),
+    read('leases', 'parent_id', ids, 'id, parent_id, file_id'),
+    read('system_leases', 'matched_lease_id', ids, 'id, matched_lease_id'),
+    read('lease_files', 'parent_lease_id', ids, 'id, parent_lease_id'),
+  ])
+  return {
+    tops,
+    rows: { rent_audits: rent, cam_reconciliations: cam, lease_insights: insights },
+    children: children.filter((c) => c.file_id !== fileId),
+    systemMatches,
+    uploadTargets: uploadTargets.filter((f) => f.id !== fileId),
+  }
+}
+
+/**
+ * Old top-level document -> new one: same type and title first, then same type
+ * and first page, then the only top-level document of that type on both sides.
+ */
+function matchDocuments(old: Attachments['tops'], fresh: LeaseRow[]): Map<string, string> {
+  const map = new Map<string, string>()
+  const free = fresh.filter((r) => r.parent_id === null)
+  const take = (o: Attachments['tops'][number], found: LeaseRow | undefined) => {
+    if (!found) return false
+    map.set(o.id, found.id)
+    free.splice(free.indexOf(found), 1)
+    return true
+  }
+  const norm = (t: string) => t.trim().toLowerCase()
+  let rest = old.filter((o) => !take(o, free.find((r) => r.doc_type === o.doc_type && norm(r.title) === norm(o.title))))
+  rest = rest.filter((o) => !take(o, free.find((r) => r.doc_type === o.doc_type && r.page_start === o.page_start)))
+  for (const o of rest) {
+    const sameType = free.filter((r) => r.doc_type === o.doc_type)
+    if (sameType.length === 1 && rest.filter((x) => x.doc_type === o.doc_type).length === 1) take(o, sameType[0])
+  }
+  return map
+}
+
+async function restoreAttachments(supabase: SupabaseClient, carried: Attachments, rows: LeaseRow[], log: Logger) {
+  const saved = FAMILY_TABLES.reduce((n, t) => n + carried.rows[t].length, 0)
+  if (!carried.tops.length || (!saved && !carried.children.length && !carried.systemMatches.length && !carried.uploadTargets.length)) return
+  const map = matchDocuments(carried.tops, rows)
+  if (!map.size) {
+    await log('warn', 'carry-over', 'No new document matches the earlier ones; saved audits and links were not carried over', { saved })
+    return
+  }
+  // Rows (including citations inside insights) point at the old ids; swap them for the new ones.
+  const remap = <T>(value: T): T => {
+    let text = JSON.stringify(value)
+    for (const [from, to] of map) text = text.replaceAll(from, to)
+    return JSON.parse(text)
+  }
+  const moved: Record<string, number> = {}
+  for (const table of FAMILY_TABLES) {
+    const list = carried.rows[table].filter((r) => map.has(r.lease_id as string)).map((r) => {
+      const { id: _id, ...rest } = r
+      return remap(table === 'lease_insights' ? r : rest)
+    })
+    if (!list.length) continue
+    const { error } = await supabase.from(table).insert(list)
+    if (error) throw new Error(`Restoring ${table} failed: ${error.message}`)
+    moved[table] = list.length
+  }
+  const relink = async (table: string, column: string, items: Array<{ id: string } & Record<string, string>>) => {
+    let n = 0
+    for (const item of items) {
+      const to = map.get(item[column])
+      if (!to) continue
+      const { error } = await supabase.from(table).update({ [column]: to }).eq('id', item.id)
+      if (error) throw new Error(`Relinking ${table} failed: ${error.message}`)
+      n++
+    }
+    if (n) moved[`${table}.${column}`] = n
+  }
+  await relink('leases', 'parent_id', carried.children)
+  await relink('system_leases', 'matched_lease_id', carried.systemMatches)
+  await relink('lease_files', 'parent_lease_id', carried.uploadTargets)
+  await log('info', 'carry-over', 'Moved saved audits, insights and links to the new documents', { moved, matched: map.size, earlier: carried.tops.length })
 }
 
 // ---------- Clause classification ----------

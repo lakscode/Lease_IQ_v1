@@ -3,6 +3,7 @@ import { getLanguageName, localizedRecord, translator } from '../i18n'
 import { common } from '../i18n/messages/common'
 import { libInsights } from '../i18n/messages/libInsights'
 import type { CamTerms } from './cam'
+import type { RentTerms } from './rentAudit'
 
 export type InsightGroup = 'revenue' | 'risk'
 export type InsightStatus = 'action' | 'watch' | 'none' | 'needs_data'
@@ -87,6 +88,8 @@ export type LeaseInsights = {
   items: Insight[]
   // CAM reconciliation terms; null for insights generated before they were added.
   cam: CamTerms | null
+  // Base rent schedule for the rent audit; null for insights generated before it was added.
+  rent: RentTerms | null
   started_at: string
   generated_at: string | null
 }
