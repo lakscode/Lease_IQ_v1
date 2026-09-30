@@ -102,6 +102,7 @@ function Terms({ rows }: { rows: Array<[string, ReactNode, string?]> }) {
 }
 
 const INSIGHTS_POLL_MS = 4000
+const INSIGHTS_WAIT_MS = 2 * 60 * 1000
 
 /** Revenue and risk opportunities of the lease family, generated on demand. */
 function InsightPanels({ familyId, familyIds, leaseId }: { familyId: string; familyIds: string[]; leaseId: string }) {
@@ -117,11 +118,18 @@ function InsightPanels({ familyId, familyIds, leaseId }: { familyId: string; fam
     fetchInsights(familyId).then(setInsights, (e) => setError(e.message))
   }, [familyId])
 
+  // Also polls for a while when there are none yet: an upload or re-analysis
+  // starts generation shortly after the file completes, possibly after this page opened.
+  const missing = insights === null
   useEffect(() => {
-    if (!generating) return
-    const t = setInterval(() => fetchInsights(familyId).then(setInsights, (e) => setError(e.message)), INSIGHTS_POLL_MS)
+    if (!generating && !missing) return
+    const until = generating ? Infinity : Date.now() + INSIGHTS_WAIT_MS
+    const t = setInterval(() => {
+      if (Date.now() > until) return clearInterval(t)
+      fetchInsights(familyId).then(setInsights, (e) => setError(e.message))
+    }, INSIGHTS_POLL_MS)
     return () => clearInterval(t)
-  }, [generating, familyId])
+  }, [generating, missing, familyId])
 
   const generate = async () => {
     setRequesting(true)
@@ -229,7 +237,14 @@ function InsightPanels({ familyId, familyIds, leaseId }: { familyId: string; fam
         <CamReconciliation familyId={familyId} terms={insights?.cam ?? null} ready={ready} />
       </Panel>
       <Panel title={t('rentAudit')} icon="🔍" color="yellow" wide>
-        <RentAudit familyId={familyId} familyIds={familyIds} terms={insights?.rent ?? null} ready={ready} />
+        <RentAudit
+          familyId={familyId}
+          familyIds={familyIds}
+          terms={insights?.rent ?? null}
+          ready={ready}
+          busy={busy}
+          onGenerate={insights === undefined ? undefined : generate}
+        />
       </Panel>
     </>
   )

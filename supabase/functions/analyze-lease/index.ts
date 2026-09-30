@@ -405,7 +405,12 @@ async function analyzeFile(
 
   // Re-analysis replaces whatever was extracted before; what hangs off the old
   // documents is saved first and moved to the new ones after they are inserted.
-  const carried = await snapshotAttachments(supabase, fileId)
+  let carried: Attachments | null = null
+  try {
+    carried = await snapshotAttachments(supabase, fileId)
+  } catch (err) {
+    await log('warn', 'carry-over', `Could not read saved data of the earlier documents: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
+  }
 
   stepStarted = Date.now()
   const { error: deleteError, count: deleted } = await supabase.from('leases').delete({ count: 'exact' }).eq('file_id', fileId)
@@ -425,7 +430,7 @@ async function analyzeFile(
 
   // Saved audits and links are extra; a failure here should not fail the analysis.
   try {
-    await restoreAttachments(supabase, carried, rows, log)
+    if (carried) await restoreAttachments(supabase, carried, rows, log)
   } catch (err) {
     await log('warn', 'carry-over', `Could not move saved data to the new documents: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
   }
@@ -510,7 +515,7 @@ function matchDocuments(old: Attachments['tops'], fresh: LeaseRow[]): Map<string
   return map
 }
 
-async function restoreAttachments(supabase: SupabaseClient, carried: Attachments, rows: LeaseRow[], log: Logger) {
+async function restoreAttachments(supabase: SupabaseClient, carried: Attachments, rows: LeaseRow[], log: Log) {
   const saved = FAMILY_TABLES.reduce((n, t) => n + carried.rows[t].length, 0)
   if (!carried.tops.length || (!saved && !carried.children.length && !carried.systemMatches.length && !carried.uploadTargets.length)) return
   const map = matchDocuments(carried.tops, rows)

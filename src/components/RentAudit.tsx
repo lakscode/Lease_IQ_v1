@@ -31,7 +31,22 @@ const parseAmount = (raw: string) => {
 }
 
 /** The lease's base rent schedule, a check against the system record, and a month-by-month audit of billed rent. */
-export function RentAudit({ familyId, familyIds, terms, ready }: { familyId: string; familyIds: string[]; terms: RentTerms | null; ready: boolean }) {
+export function RentAudit({
+  familyId,
+  familyIds,
+  terms,
+  ready,
+  busy,
+  onGenerate,
+}: {
+  familyId: string
+  familyIds: string[]
+  terms: RentTerms | null
+  ready: boolean
+  /** Insights (which include the rent schedule) are being generated. */
+  busy: boolean
+  onGenerate?: () => void
+}) {
   const dialog = useDialog()
   const { t, tp } = useT(rentAudit)
   const { t: tc } = useT(common)
@@ -141,10 +156,19 @@ export function RentAudit({ familyId, familyIds, terms, ready }: { familyId: str
       <div className="cam-grid">
         <section>
           <h3 className="cam-heading">{t('scheduleHeading')}</h3>
-          {!ready ? (
-            <p className="muted small">{t('clickGenerate')}</p>
-          ) : !terms ? (
-            <p className="muted small">{t('noTerms')}</p>
+          {busy ? (
+            <p className="muted small">
+              <span className="spinner" role="status" aria-label={t('generating')} /> {t('generating')}
+            </p>
+          ) : !ready || !terms ? (
+            <div className="rent-audit-empty">
+              <p className="muted small">{ready ? t('noTerms') : t('notGenerated')}</p>
+              {onGenerate && (
+                <button className="btn btn-sm" onClick={onGenerate}>
+                  {t('generate')}
+                </button>
+              )}
+            </div>
           ) : !terms.has_rent || !terms.steps.length ? (
             <p className="muted small">{t('noRent')}</p>
           ) : (
