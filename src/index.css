@@ -180,7 +180,7 @@ body.has-sidebar.sidebar-collapsed { padding-right: var(--sidebar-w-collapsed); 
 .card p { color: var(--muted); }
 
 .center { display: flex; justify-content: center; align-items: center; min-height: calc(100vh - 65px); padding: 1rem; }
-.container { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+.container { max-width: 1200px; margin: 0 auto; padding: 2rem 1rem; }
 
 .auth-card { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 1rem; }
 .auth-card h2 { margin: 0 0 0.5rem; }
@@ -534,6 +534,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .settings-section h2 { margin: 0; font-size: 1.1rem; }
 .settings-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .settings-row p { margin: 0.25rem 0 0; }
+/* Compact so the users table fits the 1200px settings container without scrolling */
+.users-table th, .users-table td { padding: 0.6rem; }
+.users-table .user-email { overflow-wrap: anywhere; min-width: 10rem; }
+.user-meta { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.3rem; }
+.user-actions { width: 1%; }
+.user-actions .model-picker { flex-direction: column; align-items: stretch; gap: 0.25rem; }
 
 /* ---------- Details dashboard ---------- */
 .dash { --dash-purple: #4f46e5; --dash-yellow: #fbbf24; background: var(--bg); padding: 0.5rem 0 0; }
@@ -655,7 +661,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .chat-history-list li:hover .chat-history-delete, .chat-history-delete:focus-visible { opacity: 1; }
 .chat-history-delete:hover { color: var(--error); }
-@media (max-width: 800px) {
+@media (max-width: 1200px) {
   .chat-layout { grid-template-columns: 1fr; }
   .chat-history { max-height: 14rem; min-height: 0; }
   .chat-history-delete { opacity: 1; }

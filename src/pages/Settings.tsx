@@ -427,7 +427,7 @@ function UsersSettings() {
       {error && <p className="error">{error}</p>}
       {users && (
         <div className="table-wrap flush">
-          <table className="table">
+          <table className="table users-table">
             <thead>
               <tr>
                 <th>{t('usersEmail')}</th>
@@ -440,10 +440,14 @@ function UsersSettings() {
             <tbody>
               {shown.map((u) => (
                 <tr key={u.id}>
-                  <td>
+                  <td className="user-email">
                     {u.email ?? <span className="muted">—</span>}
-                    {u.id === myId && <span className="muted small"> ({t('usersYou')})</span>}
-                    {!u.confirmed && <span className="badge badge-pending badge-inline">{t('usersUnconfirmed')}</span>}
+                    {(u.id === myId || !u.confirmed) && (
+                      <div className="user-meta">
+                        {u.id === myId && <span className="muted small">({t('usersYou')})</span>}
+                        {!u.confirmed && <span className="badge badge-pending">{t('usersUnconfirmed')}</span>}
+                      </div>
+                    )}
                   </td>
                   <td>
                     <span className={`badge ${u.role === 'superadmin' ? 'nav-role' : 'badge-pending'}`}>
@@ -451,8 +455,8 @@ function UsersSettings() {
                     </span>
                   </td>
                   <td className="nowrap">{formatDate(u.created_at)}</td>
-                  <td className="nowrap">{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : <span className="muted">{t('usersNever')}</span>}</td>
-                  <td className="nowrap">
+                  <td>{u.last_sign_in_at ? formatDateTime(u.last_sign_in_at) : <span className="muted">{t('usersNever')}</span>}</td>
+                  <td className="user-actions">
                     <div className="model-picker">
                       <button className="btn btn-ghost btn-sm" onClick={() => setEditing(u)} disabled={deleting === u.id}>
                         {t('userEdit')}

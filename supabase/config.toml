@@ -338,8 +338,8 @@ email_optional = false
 [auth.external.azure]
 enabled = false
 client_id = "env(SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID)"
-secret = "env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"
-redirect_uri = "https://login.microsoftonline.com"
+secret = "env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET_VALUE)"
+redirect_uri = ""
 # https://login.microsoftonline.com/<tenant-id> to allow only your organization; empty allows any Microsoft account.
 url = ""
 skip_nonce_check = false
