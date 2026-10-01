@@ -2,7 +2,7 @@
 // Settings page (app_settings.claude_model), else ANTHROPIC_MODEL / config.ts,
 // else Claude Opus 5.
 
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import type { Database } from './db/query.ts'
 import { config } from '../analyze-lease/config.ts'
 
 export const DEFAULT_MODEL = Deno.env.get('ANTHROPIC_MODEL') || config.anthropicModel || 'claude-opus-5'
@@ -10,8 +10,8 @@ export const DEFAULT_MODEL = Deno.env.get('ANTHROPIC_MODEL') || config.anthropic
 // Models with safety classifiers that accept server-side refusal fallbacks.
 const FALLBACK_MODELS = new Set(['claude-opus-5', 'claude-opus-5-5', 'claude-fable-5-1'])
 
-export async function resolveModel(supabase: SupabaseClient): Promise<string> {
-  const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'claude_model').maybeSingle()
+export async function resolveModel(db: Database): Promise<string> {
+  const { data, error } = await db.from('app_settings').select('value').eq('key', 'claude_model').maybeSingle()
   if (error) console.warn(JSON.stringify({ step: 'model', message: `Reading app_settings failed: ${error.message}` }))
   const chosen = data?.value
   return typeof chosen === 'string' && /^claude-[a-z0-9-]+$/.test(chosen) ? chosen : DEFAULT_MODEL

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import {
   deleteLeaseFile,
   formatTokens,
@@ -84,9 +84,9 @@ export function LeaseAbstraction() {
 
   const load = useCallback(async () => {
     const [filesRes, leasesRes, usageRes] = await Promise.all([
-      supabase.from('lease_files').select('*').order('created_at', { ascending: false }),
-      supabase.from('leases').select('*'),
-      supabase.from('ai_usage').select('*').not('file_id', 'is', null).order('created_at'),
+      db.from('lease_files').select('*').order('created_at', { ascending: false }),
+      db.from('leases').select('*'),
+      db.from('ai_usage').select('*').not('file_id', 'is', null).order('created_at'),
     ])
     // Usage is extra detail; the table still loads without it.
     if (usageRes.error) console.warn('[usage] loading ai_usage failed:', usageRes.error.message)

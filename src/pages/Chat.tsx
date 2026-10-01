@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import { DOC_TYPE_LABELS, formatTokens, type Lease } from '../lib/leases'
 import { useDialog } from '../components/Dialog'
 import { formatDateTime, formatNumber, useT } from '../i18n'
@@ -69,7 +69,7 @@ export function Chat() {
   }, [chatId])
 
   useEffect(() => {
-    supabase
+    db
       .from('leases')
       .select('*')
       .order('title')

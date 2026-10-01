@@ -10,7 +10,8 @@
 // language is the English name of the app's interface language (see LANGUAGES); answers are written in it.
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createDb, type Database } from '../_shared/db/index.ts'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 // Shares the API key settings with analyze-lease (gitignored; see config.example.ts there).
 import { config } from '../analyze-lease/config.ts'
@@ -21,7 +22,7 @@ import { semanticSearch, vectorsEnabled } from '../_shared/vectors.ts'
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '6'
+const FUNCTION_VERSION = '7'
 const MAX_TOOL_ROUNDS = 8
 const MAX_HISTORY = 20
 const MAX_MESSAGE_CHARS = 8000
@@ -124,6 +125,8 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
     global: { headers: { Authorization: authHeader } },
   })
+  // Postgres or MongoDB, whichever is chosen in Settings.
+  const db = createDb(supabase, authHeader.replace('Bearer ', ''))
   const { data: userData, error: userError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
   if (userError || !userData.user) return json({ error: 'Not authenticated' }, 401)
 
@@ -136,7 +139,7 @@ Deno.serve(async (req) => {
   // Saved chat this question belongs to (row level security: only the caller's own).
   let chat: { id: string; title: string } | null = null
   if (typeof body.chatId === 'string') {
-    const { data } = await supabase.from('lease_chats').select('id, title').eq('id', body.chatId).maybeSingle()
+    const { data } = await db.from('lease_chats').select('id, title').eq('id', body.chatId).maybeSingle()
     chat = data
   }
 
@@ -144,7 +147,7 @@ Deno.serve(async (req) => {
     return json({ error: 'The Anthropic API key is not set. Put it in supabase/functions/analyze-lease/config.ts and redeploy.' }, 500)
   }
 
-  const { data: leases, error: leasesError } = await supabase
+  const { data: leases, error: leasesError } = await db
     .from('leases')
     .select('id, title, doc_type, parent_id, file_id, page_start, page_end, effective_date, landlord, tenant, premises, summary, abstract')
     .order('created_at')
@@ -157,7 +160,7 @@ Deno.serve(async (req) => {
   const focus = focusId ? catalogue.get(focusId) : undefined
 
   try {
-    const result = await answer(supabase, userData.user.id, catalogue, history, focus, chat, language)
+    const result = await answer(db, userData.user.id, catalogue, history, focus, chat, language)
     return json(result)
   } catch (err) {
     console.error(JSON.stringify({ v: FUNCTION_VERSION, step: 'failed', error: err instanceof Error ? err.message : String(err) }))
@@ -196,7 +199,7 @@ function catalogueText(catalogue: Map<string, CatalogueLease>) {
 }
 
 async function answer(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   catalogue: Map<string, CatalogueLease>,
   history: ChatTurn[],
@@ -205,14 +208,14 @@ async function answer(
   language: string,
 ) {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY, baseURL: ANTHROPIC_BASE_URL })
-  const model = await resolveModel(supabase)
+  const model = await resolveModel(db)
   const usage = new UsageTally(model)
   try {
-    const result = await runAnswerLoop(client, model, supabase, userId, catalogue, history, focus, usage, language)
+    const result = await runAnswerLoop(client, model, db, userId, catalogue, history, focus, usage, language)
     return { ...result, usage: usage.summary() }
   } finally {
     // Tokens are spent even when the loop fails part-way, so always record them.
-    await usage.save(supabase, chat)
+    await usage.save(db, chat)
   }
 }
 
@@ -247,9 +250,9 @@ class UsageTally {
     return { input: this.input + this.cacheWrite + this.cacheRead, output: this.output }
   }
 
-  async save(supabase: SupabaseClient, chat: { id: string; title: string } | null) {
+  async save(db: Database, chat: { id: string; title: string } | null) {
     if (!this.rounds.length) return
-    const { error } = await supabase.from('ai_usage').insert({
+    const { error } = await db.from('ai_usage').insert({
       process: 'chat',
       chat_id: chat?.id ?? null,
       chat_title: chat?.title ?? null,
@@ -270,7 +273,7 @@ class UsageTally {
 async function runAnswerLoop(
   client: Anthropic,
   model: string,
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   catalogue: Map<string, CatalogueLease>,
   history: ChatTurn[],
@@ -326,7 +329,7 @@ async function runAnswerLoop(
 
     messages.push({ role: 'assistant', content: message.content })
     const toolUses = message.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use')
-    const results = await Promise.all(toolUses.map((use) => runTool(supabase, userId, catalogue, use, addSource)))
+    const results = await Promise.all(toolUses.map((use) => runTool(db, userId, catalogue, use, addSource)))
     messages.push({ role: 'user', content: results })
   }
 
@@ -354,7 +357,7 @@ function rankSources(sources: Map<string, Source & { read: boolean }>): Source[]
 }
 
 async function runTool(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   catalogue: Map<string, CatalogueLease>,
   use: Anthropic.Beta.BetaToolUseBlock,
@@ -374,9 +377,9 @@ async function runTool(
     const leaseId = typeof input.lease_id === 'string' ? input.lease_id : null
     if (leaseId && !catalogue.has(leaseId)) return result(`Unknown lease_id ${leaseId}`, true)
 
-    // Keyword (Postgres full-text) and semantic (Voyage AI + MongoDB Atlas) search run side by side.
+    // Keyword (full-text, in Postgres or MongoDB) and semantic (Voyage AI + MongoDB Atlas) search run side by side.
     const [keyword, semantic] = await Promise.all([
-      supabase.rpc('search_lease_pages', { search_query: input.query, lease_filter: leaseId, match_count: 8 }),
+      db.rpc('search_lease_pages', { search_query: input.query, lease_filter: leaseId, match_count: 8 }),
       vectorsEnabled()
         ? semanticSearch(userId, input.query, leaseId).catch((err) => {
             console.warn(JSON.stringify({ v: FUNCTION_VERSION, step: 'semantic-search', error: String(err) }))
@@ -420,7 +423,7 @@ async function runTool(
     const last = Math.min(Number(input.last_page) || first, lease.page_end, first + MAX_PAGES_PER_READ - 1)
     if (last < first) return result(`"${lease.title}" covers pages ${lease.page_start}-${lease.page_end}.`, true)
 
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('lease_file_pages')
       .select('page_number, text')
       .eq('file_id', lease.file_id)

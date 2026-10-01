@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { db } from './db'
 import type { Lease } from './leases'
 import { translator } from '../i18n'
 import { libImports } from '../i18n/messages/libImports'
@@ -431,7 +431,7 @@ export async function saveImport(
   columnMap: Record<string, string>,
   records: Array<SystemRecord & { matched_lease_id: string | null }>,
 ): Promise<DataImport> {
-  const { data: imp, error } = await supabase
+  const { data: imp, error } = await db
     .from('data_imports')
     .insert({
       source,
@@ -446,9 +446,9 @@ export async function saveImport(
 
   for (let i = 0; i < records.length; i += 200) {
     const batch = records.slice(i, i + 200).map((r) => ({ ...r, import_id: imp.id, source }))
-    const { error: rowsError } = await supabase.from('system_leases').insert(batch)
+    const { error: rowsError } = await db.from('system_leases').insert(batch)
     if (rowsError) {
-      await supabase.from('data_imports').delete().eq('id', imp.id)
+      await db.from('data_imports').delete().eq('id', imp.id)
       throw new Error(translator(libImports).t('err_save_rows', { detail: rowsError.message }))
     }
   }
@@ -456,20 +456,20 @@ export async function saveImport(
 }
 
 export async function listImports(): Promise<DataImport[]> {
-  const { data, error } = await supabase.from('data_imports').select('*').order('created_at', { ascending: false })
+  const { data, error } = await db.from('data_imports').select('*').order('created_at', { ascending: false })
   if (error) throw new Error(error.message)
   return data as DataImport[]
 }
 
 export async function deleteImport(id: string) {
-  const { error } = await supabase.from('data_imports').delete().eq('id', id)
+  const { error } = await db.from('data_imports').delete().eq('id', id)
   if (error) throw new Error(error.message)
 }
 
 /** The latest imported system record matched to any document of the lease family. */
 export async function fetchSystemLease(familyIds: string[]): Promise<SavedSystemLease | null> {
   if (!familyIds.length) return null
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('system_leases')
     .select('*')
     .in('matched_lease_id', familyIds)

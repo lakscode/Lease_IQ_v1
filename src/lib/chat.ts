@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { db } from './db'
 import { getLanguageName, translator } from '../i18n'
 import { common } from '../i18n/messages/common'
 import type { DocType } from './leases'
@@ -28,7 +29,7 @@ export type LeaseChat = {
 export type LeaseChatSummary = Pick<LeaseChat, 'id' | 'lease_id' | 'title' | 'updated_at'>
 
 export async function listChats(): Promise<LeaseChatSummary[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('lease_chats')
     .select('id, lease_id, title, updated_at')
     .order('updated_at', { ascending: false })
@@ -37,7 +38,7 @@ export async function listChats(): Promise<LeaseChatSummary[]> {
 }
 
 export async function fetchChat(id: string): Promise<LeaseChat | null> {
-  const { data, error } = await supabase.from('lease_chats').select('*').eq('id', id).maybeSingle()
+  const { data, error } = await db.from('lease_chats').select('*').eq('id', id).maybeSingle()
   if (error) throw new Error(error.message)
   return data as LeaseChat | null
 }
@@ -47,15 +48,15 @@ export async function saveChat(id: string | null, leaseId: string | null, messag
   const stored = messages.filter((m) => !m.error)
   const row = { lease_id: leaseId, messages: stored, updated_at: new Date().toISOString() }
   const query = id
-    ? supabase.from('lease_chats').update(row).eq('id', id)
-    : supabase.from('lease_chats').insert({ ...row, title: chatTitle(stored) })
+    ? db.from('lease_chats').update(row).eq('id', id)
+    : db.from('lease_chats').insert({ ...row, title: chatTitle(stored) })
   const { data, error } = await query.select('id, lease_id, title, updated_at').single()
   if (error) throw new Error(error.message)
   return data
 }
 
 export async function deleteChat(id: string) {
-  const { error } = await supabase.from('lease_chats').delete().eq('id', id)
+  const { error } = await db.from('lease_chats').delete().eq('id', id)
   if (error) throw new Error(error.message)
 }
 

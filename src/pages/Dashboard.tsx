@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../lib/AuthProvider'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import type { Lease } from '../lib/leases'
 import { daysFromToday, leaseTerms, type LeaseTerm } from '../lib/leaseStatus'
 import { formatDate, formatNumber, useT } from '../i18n'
@@ -204,7 +204,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([supabase.from('lease_files').select('is_scanned'), supabase.from('leases').select('*')]).then(
+    Promise.all([db.from('lease_files').select('is_scanned'), db.from('leases').select('*')]).then(
       ([filesRes, leasesRes]) => {
         const err = filesRes.error ?? leasesRes.error
         if (err) setError(err.message)

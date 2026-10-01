@@ -7,7 +7,8 @@
 // polls lease_files.status until it becomes 'analyzed' or 'failed'.
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createDb, type Database } from '../_shared/db/index.ts'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 import { classifyClause, loadClauseModel, splitClauses, type ClauseModel, type ClauseModelJson } from './clause_svm.ts'
 import clauseModelJson from './clause_model.json' with { type: 'json' }
@@ -46,7 +47,7 @@ const ABSTRACT_FIELDS = [
 
 // Bump when changing this function, together with EXPECTED_FUNCTION_VERSION in
 // src/lib/health.ts; returned in the x-function-version header.
-const FUNCTION_VERSION = '14'
+const FUNCTION_VERSION = '15'
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -143,7 +144,7 @@ const elapsed = (start: number) => Date.now() - start
 type Level = 'info' | 'warn' | 'error'
 type Log = (level: Level, step: string, message: string, data?: Record<string, unknown>) => Promise<void>
 
-function createLogger(supabase: SupabaseClient, requestId: string) {
+function createLogger(db: Database, requestId: string) {
   let fileId: string | null = null
   let dbEnabled = true
 
@@ -154,7 +155,7 @@ function createLogger(supabase: SupabaseClient, requestId: string) {
     else console.log(line)
 
     if (!fileId || !dbEnabled) return
-    const { error } = await supabase
+    const { error } = await db
       .from('lease_file_logs')
       .insert({ file_id: fileId, source: 'function', level, step, message, data: data ?? null })
     if (error) {
@@ -181,7 +182,7 @@ function errorData(err: unknown): Record<string, unknown> {
 }
 
 // Jobs still running in this worker, so a shutdown can be recorded against them.
-const activeJobs = new Map<string, { log: Log; supabase: SupabaseClient; startedAt: number }>()
+const activeJobs = new Map<string, { log: Log; db: Database; startedAt: number }>()
 
 addEventListener('beforeunload', (ev) => {
   // deno-lint-ignore no-explicit-any
@@ -190,7 +191,7 @@ addEventListener('beforeunload', (ev) => {
   for (const [fileId, job] of activeJobs) {
     const message = `Edge Function was stopped (${reason}) after ${Math.round(elapsed(job.startedAt) / 1000)}s, before analysis finished. Try Retry, or split the PDF into smaller files.`
     void job.log('error', 'shutdown', message, { reason })
-    void job.supabase.from('lease_files').update({ status: 'failed', error: message }).eq('id', fileId)
+    void job.db.from('lease_files').update({ status: 'failed', error: message }).eq('id', fileId)
   }
 })
 
@@ -215,7 +216,9 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
     global: { headers: { Authorization: authHeader } },
   })
-  const { log, setFile } = createLogger(supabase, requestId)
+  // Postgres or MongoDB, whichever is chosen in Settings.
+  const db = createDb(supabase, authHeader.replace('Bearer ', ''))
+  const { log, setFile } = createLogger(db, requestId)
 
   const { data: userData, error: userError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
   if (userError || !userData.user) {
@@ -230,7 +233,7 @@ Deno.serve(async (req) => {
     return json({ error: 'fileId is required' }, 400)
   }
 
-  const { data: file, error: fileError } = await supabase
+  const { data: file, error: fileError } = await db
     .from('lease_files')
     .select('id, page_count, status, file_name, parent_lease_id')
     .eq('id', fileId)
@@ -245,7 +248,7 @@ Deno.serve(async (req) => {
   }
 
   setFile(fileId)
-  const model = await resolveModel(supabase)
+  const model = await resolveModel(db)
   await log('info', 'start', `Analysis requested (function v${FUNCTION_VERSION}, model ${model})`, {
     previousStatus: file.status,
     pageCount: file.page_count,
@@ -254,7 +257,7 @@ Deno.serve(async (req) => {
 
   // A file that is not fresh from upload means this is a retry / re-analysis.
   if (file.status !== 'processing') {
-    const { count: previousDocs } = await supabase
+    const { count: previousDocs } = await db
       .from('leases')
       .select('*', { count: 'exact', head: true })
       .eq('file_id', fileId)
@@ -264,24 +267,24 @@ Deno.serve(async (req) => {
     })
   }
 
-  const { error: statusError } = await supabase.from('lease_files').update({ status: 'analyzing', error: null }).eq('id', fileId)
+  const { error: statusError } = await db.from('lease_files').update({ status: 'analyzing', error: null }).eq('id', fileId)
   if (statusError) await log('warn', 'status', `Could not set status to analyzing: ${statusError.message}`)
   else await log('info', 'status', 'File status set to analyzing')
 
-  const recordUsage = createUsageRecorder(supabase, log, {
+  const recordUsage = createUsageRecorder(db, log, {
     file_id: fileId,
     file_name: file.file_name,
     process: file.status === 'processing' ? 'analysis' : 'reanalysis',
     model,
   })
 
-  activeJobs.set(fileId, { log, supabase, startedAt: started })
+  activeJobs.set(fileId, { log, db, startedAt: started })
   EdgeRuntime.waitUntil(
-    analyzeFile(supabase, fileId, file.page_count, file.parent_lease_id ?? null, model, recordUsage, log)
+    analyzeFile(db, fileId, file.page_count, file.parent_lease_id ?? null, model, recordUsage, log)
       .then(() => log('info', 'done', 'Analysis finished', { totalMs: elapsed(started) }))
       .catch(async (err) => {
         await log('error', 'failed', `Analysis failed: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
-        const { error } = await supabase
+        const { error } = await db
           .from('lease_files')
           .update({ status: 'failed', error: err instanceof Error ? err.message : String(err) })
           .eq('id', fileId)
@@ -302,7 +305,7 @@ type RecordUsage = (message: any, durationMs: number) => Promise<void>
 
 /** Saves each Claude response's token usage to ai_usage; a failed insert is logged, never fatal. */
 function createUsageRecorder(
-  supabase: SupabaseClient,
+  db: Database,
   log: Log,
   base: { file_id: string; file_name: string; process: 'analysis' | 'reanalysis'; model: string },
 ): RecordUsage {
@@ -319,7 +322,7 @@ function createUsageRecorder(
       usage,
       duration_ms: Math.round(durationMs),
     }
-    const { error } = await supabase.from('ai_usage').insert(row)
+    const { error } = await db.from('ai_usage').insert(row)
     if (error) await log('warn', 'usage', `Could not save token usage: ${error.message}`, row)
     else await log('info', 'usage', `Token usage saved: ${row.input_tokens} input, ${row.output_tokens} output`)
   }
@@ -328,7 +331,7 @@ function createUsageRecorder(
 // ---------- Analysis ----------
 
 async function analyzeFile(
-  supabase: SupabaseClient,
+  db: Database,
   fileId: string,
   pageCount: number,
   targetId: string | null,
@@ -337,7 +340,7 @@ async function analyzeFile(
   log: Log,
 ) {
   let stepStarted = Date.now()
-  const { data: pages, error: pagesError } = await supabase
+  const { data: pages, error: pagesError } = await db
     .from('lease_file_pages')
     .select('page_number, text, is_ocr')
     .eq('file_id', fileId)
@@ -355,7 +358,7 @@ async function analyzeFile(
   if (emptyPages.length) await log('warn', 'load-pages', `${emptyPages.length} page(s) have no text`, { emptyPages })
 
   stepStarted = Date.now()
-  const { data: existingMains, error: mainsError } = await supabase
+  const { data: existingMains, error: mainsError } = await db
     .from('leases')
     .select('id, title, landlord, tenant, premises, effective_date')
     .eq('doc_type', 'main_lease')
@@ -381,7 +384,7 @@ async function analyzeFile(
   // Set when the file was uploaded as an amendment for a specific lease.
   let target: Record<string, unknown> | null = null
   if (targetId) {
-    const { data } = await supabase
+    const { data } = await db
       .from('leases')
       .select('id, title, landlord, tenant, premises, effective_date')
       .eq('id', targetId)
@@ -407,13 +410,13 @@ async function analyzeFile(
   // documents is saved first and moved to the new ones after they are inserted.
   let carried: Attachments | null = null
   try {
-    carried = await snapshotAttachments(supabase, fileId)
+    carried = await snapshotAttachments(db, fileId)
   } catch (err) {
     await log('warn', 'carry-over', `Could not read saved data of the earlier documents: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
   }
 
   stepStarted = Date.now()
-  const { error: deleteError, count: deleted } = await supabase.from('leases').delete({ count: 'exact' }).eq('file_id', fileId)
+  const { error: deleteError, count: deleted } = await db.from('leases').delete({ count: 'exact' }).eq('file_id', fileId)
   if (deleteError) throw new Error(`Removing previous results failed: ${deleteError.message}`)
   await log('info', 'save', `Removed ${deleted ?? 0} document record(s) from an earlier run`, { ms: elapsed(stepStarted) })
 
@@ -423,26 +426,26 @@ async function analyzeFile(
   for (const [label, batch] of [['top-level', mains], ['child', children]] as const) {
     if (!batch.length) continue
     stepStarted = Date.now()
-    const { error } = await supabase.from('leases').insert(batch.map(withFile))
+    const { error } = await db.from('leases').insert(batch.map(withFile))
     if (error) throw new Error(`Saving ${label} documents failed: ${error.message}`)
     await log('info', 'save', `Saved ${batch.length} ${label} document(s)`, { ms: elapsed(stepStarted) })
   }
 
   // Saved audits and links are extra; a failure here should not fail the analysis.
   try {
-    if (carried) await restoreAttachments(supabase, carried, rows, log)
+    if (carried) await restoreAttachments(db, carried, rows, log)
   } catch (err) {
     await log('warn', 'carry-over', `Could not move saved data to the new documents: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
   }
 
   // Clause labels are extra detail; a failure here should not fail the analysis.
   try {
-    await classifyClauses(supabase, rows, pages, log)
+    await classifyClauses(db, rows, pages, log)
   } catch (err) {
     await log('warn', 'clauses', `Clause classification failed: ${err instanceof Error ? err.message : String(err)}`, errorData(err))
   }
 
-  const { error: updateError } = await supabase.from('lease_files').update({ status: 'analyzed' }).eq('id', fileId)
+  const { error: updateError } = await db.from('lease_files').update({ status: 'analyzed' }).eq('id', fileId)
   if (updateError) throw new Error(`Setting status to analyzed failed: ${updateError.message}`)
   await log('info', 'status', 'File status set to analyzed (browser will now split the PDF)')
 }
@@ -461,16 +464,16 @@ type Attachments = {
   uploadTargets: Array<{ id: string; parent_lease_id: string }>
 }
 
-async function snapshotAttachments(supabase: SupabaseClient, fileId: string): Promise<Attachments> {
+async function snapshotAttachments(db: Database, fileId: string): Promise<Attachments> {
   const empty: Attachments = { tops: [], rows: { rent_audits: [], cam_reconciliations: [], lease_insights: [] }, children: [], systemMatches: [], uploadTargets: [] }
-  const { data: docs, error } = await supabase.from('leases').select('id, parent_id, title, doc_type, page_start').eq('file_id', fileId)
+  const { data: docs, error } = await db.from('leases').select('id, parent_id, title, doc_type, page_start').eq('file_id', fileId)
   if (error || !docs?.length) return empty
   const ids = docs.map((d) => d.id as string)
   const tops = docs.filter((d) => d.parent_id === null) as Attachments['tops']
   const topIds = tops.map((d) => d.id)
   const read = async (table: string, column: string, keys: string[], columns = '*') => {
     if (!keys.length) return []
-    const { data, error } = await supabase.from(table).select(columns).in(column, keys)
+    const { data, error } = await db.from(table).select(columns).in(column, keys)
     if (error) throw new Error(`Reading ${table} failed: ${error.message}`)
     // deno-lint-ignore no-explicit-any
     return (data ?? []) as any[]
@@ -515,7 +518,7 @@ function matchDocuments(old: Attachments['tops'], fresh: LeaseRow[]): Map<string
   return map
 }
 
-async function restoreAttachments(supabase: SupabaseClient, carried: Attachments, rows: LeaseRow[], log: Log) {
+async function restoreAttachments(db: Database, carried: Attachments, rows: LeaseRow[], log: Log) {
   const saved = FAMILY_TABLES.reduce((n, t) => n + carried.rows[t].length, 0)
   if (!carried.tops.length || (!saved && !carried.children.length && !carried.systemMatches.length && !carried.uploadTargets.length)) return
   const map = matchDocuments(carried.tops, rows)
@@ -536,7 +539,7 @@ async function restoreAttachments(supabase: SupabaseClient, carried: Attachments
       return remap(table === 'lease_insights' ? r : rest)
     })
     if (!list.length) continue
-    const { error } = await supabase.from(table).insert(list)
+    const { error } = await db.from(table).insert(list)
     if (error) throw new Error(`Restoring ${table} failed: ${error.message}`)
     moved[table] = list.length
   }
@@ -545,7 +548,7 @@ async function restoreAttachments(supabase: SupabaseClient, carried: Attachments
     for (const item of items) {
       const to = map.get(item[column])
       if (!to) continue
-      const { error } = await supabase.from(table).update({ [column]: to }).eq('id', item.id)
+      const { error } = await db.from(table).update({ [column]: to }).eq('id', item.id)
       if (error) throw new Error(`Relinking ${table} failed: ${error.message}`)
       n++
     }
@@ -563,7 +566,7 @@ let clauseModel: ClauseModel | null = null
 const CLAUSE_BATCH = 500
 
 async function classifyClauses(
-  supabase: SupabaseClient,
+  db: Database,
   rows: LeaseRow[],
   pages: Array<{ page_number: number; text: string }>,
   log: Log,
@@ -589,7 +592,7 @@ async function classifyClauses(
   })
 
   for (let i = 0; i < clauseRows.length; i += CLAUSE_BATCH) {
-    const { error } = await supabase.from('lease_clauses').insert(clauseRows.slice(i, i + CLAUSE_BATCH))
+    const { error } = await db.from('lease_clauses').insert(clauseRows.slice(i, i + CLAUSE_BATCH))
     if (error) throw new Error(`Saving clauses failed: ${error.message}`)
   }
   const labels: Record<string, number> = {}

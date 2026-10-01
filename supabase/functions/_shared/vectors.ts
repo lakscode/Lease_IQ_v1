@@ -4,11 +4,13 @@
 //
 // MongoDB has no row level security, so every read, write and delete here is
 // scoped to the authenticated user's id; callers pass the id from
-// supabase.auth.getUser(), never one from the request body.
+// supabase.auth.getUser(), never one from the request body. Lease and page
+// rows are read through the chosen database (Postgres or MongoDB, see db/).
 
-import { MongoClient, type Collection } from 'npm:mongodb@6'
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import type { Collection } from 'npm:mongodb@6'
 import { config } from '../analyze-lease/config.ts'
+import type { Database } from './db/query.ts'
+import { mongoConfigured, mongoDatabase } from './mongoClient.ts'
 import { compactText } from './text.ts'
 
 const settings = config as Record<string, string | undefined>
@@ -17,8 +19,6 @@ const VOYAGE_API_KEY = Deno.env.get('VOYAGE_API_KEY') || settings.voyageApiKey |
 const VOYAGE_MODEL = Deno.env.get('VOYAGE_MODEL') || settings.voyageModel || 'voyage-law-2'
 const VOYAGE_RERANK_MODEL = Deno.env.get('VOYAGE_RERANK_MODEL') || settings.voyageRerankModel || 'rerank-2.5'
 const DIMENSIONS = Number(Deno.env.get('VOYAGE_DIMENSIONS') || settings.voyageDimensions || 1024)
-const MONGODB_URI = Deno.env.get('MONGODB_URI') || settings.mongodbUri || ''
-const MONGODB_DB = Deno.env.get('MONGODB_DB') || settings.mongodbDb || 'leaseiq'
 
 const COLLECTION = 'lease_chunks'
 const INDEX_NAME = 'lease_chunks_vector'
@@ -29,7 +29,7 @@ const BATCH_INPUTS = 64
 const BATCH_CHARS = 240_000
 
 export const vectorsEnabled = () =>
-  !!VOYAGE_API_KEY && VOYAGE_API_KEY !== 'pa-...' && !!MONGODB_URI && MONGODB_URI !== 'mongodb+srv://...'
+  !!VOYAGE_API_KEY && VOYAGE_API_KEY !== 'pa-...' && mongoConfigured()
 
 type Chunk = {
   user_id: string
@@ -44,13 +44,10 @@ type Chunk = {
 
 export type SemanticHit = { lease_id: string; page_number: number; text: string; score: number }
 
-let client: MongoClient | null = null
 let indexChecked = false
 
 async function chunks(): Promise<Collection<Chunk>> {
-  client ??= new MongoClient(MONGODB_URI, { appName: 'leaseiq-edge' })
-  await client.connect()
-  return client.db(MONGODB_DB).collection<Chunk>(COLLECTION)
+  return (await mongoDatabase()).collection<Chunk>(COLLECTION)
 }
 
 /** Creates the Atlas Vector Search index on first use (building it takes about a minute). */
@@ -121,10 +118,10 @@ function splitText(text: string) {
 }
 
 /** (Re)builds the vectors of one file's pages, each tagged with the lease document it belongs to. */
-export async function indexFile(supabase: SupabaseClient, userId: string, fileId: string) {
+export async function indexFile(db: Database, userId: string, fileId: string) {
   const [{ data: leases, error: leasesError }, { data: pages, error: pagesError }] = await Promise.all([
-    supabase.from('leases').select('id, page_start, page_end').eq('file_id', fileId),
-    supabase.from('lease_file_pages').select('page_number, text').eq('file_id', fileId).order('page_number'),
+    db.from('leases').select('id, page_start, page_end').eq('file_id', fileId),
+    db.from('lease_file_pages').select('page_number, text').eq('file_id', fileId).order('page_number'),
   ])
   if (leasesError) throw new Error(`Loading documents failed: ${leasesError.message}`)
   if (pagesError) throw new Error(`Loading page text failed: ${pagesError.message}`)

@@ -9,7 +9,8 @@
 // the browser polls that row until status is 'ready' or 'failed'.
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createDb, type Database } from '../_shared/db/index.ts'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0'
 // Shares the API key settings with analyze-lease (gitignored; see config.example.ts there).
 import { config } from '../analyze-lease/config.ts'
@@ -19,7 +20,7 @@ import { compactText } from '../_shared/text.ts'
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || config.anthropicApiKey
 const ANTHROPIC_BASE_URL = Deno.env.get('ANTHROPIC_BASE_URL') || config.anthropicBaseUrl || undefined
 
-const FUNCTION_VERSION = '6'
+const FUNCTION_VERSION = '7'
 const MAX_INPUT_CHARS = 2_500_000
 // Interface languages of the app (src/i18n/index.tsx); the insight text is written in the requester's.
 const LANGUAGES = ['English', 'German', 'Spanish', 'Portuguese', 'Italian']
@@ -235,6 +236,8 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
     global: { headers: { Authorization: authHeader } },
   })
+  // Postgres or MongoDB, whichever is chosen in Settings.
+  const db = createDb(supabase, authHeader.replace('Bearer ', ''))
   const { data: userData, error: userError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
   if (userError || !userData.user) return json({ error: 'Not authenticated' }, 401)
 
@@ -247,17 +250,17 @@ Deno.serve(async (req) => {
   }
 
   const columns = 'id, file_id, parent_id, doc_type, title, page_start, page_end, effective_date, abstract'
-  const { data: lease, error: leaseError } = await supabase.from('leases').select(columns).eq('id', leaseId).maybeSingle()
+  const { data: lease, error: leaseError } = await db.from('leases').select(columns).eq('id', leaseId).maybeSingle()
   if (leaseError) return json({ error: leaseError.message }, 500)
   if (!lease) return json({ error: 'Lease not found' }, 404)
 
   // The family is keyed by its main lease.
   let root = lease as FamilyDoc
   if (root.parent_id) {
-    const { data: parent } = await supabase.from('leases').select(columns).eq('id', root.parent_id).maybeSingle()
+    const { data: parent } = await db.from('leases').select(columns).eq('id', root.parent_id).maybeSingle()
     if (parent) root = parent as FamilyDoc
   }
-  const { data: children, error: childrenError } = await supabase.from('leases').select(columns).eq('parent_id', root.id)
+  const { data: children, error: childrenError } = await db.from('leases').select(columns).eq('parent_id', root.id)
   if (childrenError) return json({ error: childrenError.message }, 500)
   const family = [
     root,
@@ -266,8 +269,8 @@ Deno.serve(async (req) => {
     ),
   ]
 
-  const model = await resolveModel(supabase)
-  const { error: upsertError } = await supabase.from('lease_insights').upsert({
+  const model = await resolveModel(db)
+  const { error: upsertError } = await db.from('lease_insights').upsert({
     lease_id: root.id,
     status: 'generating',
     error: null,
@@ -277,21 +280,21 @@ Deno.serve(async (req) => {
   if (upsertError) return json({ error: upsertError.message }, 500)
 
   EdgeRuntime.waitUntil(
-    generate(supabase, root, family, model, language).catch(async (err) => {
+    generate(db, root, family, model, language).catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err)
       console.error(JSON.stringify({ v: FUNCTION_VERSION, step: 'failed', familyId: root.id, error: message }))
-      await supabase.from('lease_insights').update({ status: 'failed', error: message }).eq('lease_id', root.id)
+      await db.from('lease_insights').update({ status: 'failed', error: message }).eq('lease_id', root.id)
     }),
   )
 
   return json({ familyId: root.id, status: 'generating', version: FUNCTION_VERSION }, 202)
 })
 
-async function generate(supabase: SupabaseClient, root: FamilyDoc, family: FamilyDoc[], model: string, language: string) {
+async function generate(db: Database, root: FamilyDoc, family: FamilyDoc[], model: string, language: string) {
   // Page text of every document, read from each document's own file.
   const parts: string[] = []
   for (const [index, doc] of family.entries()) {
-    const { data: pages, error } = await supabase
+    const { data: pages, error } = await db
       .from('lease_file_pages')
       .select('page_number, text')
       .eq('file_id', doc.file_id)
@@ -310,7 +313,7 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
   const abstracts = family.map((d, index) => ({ index, type: d.doc_type, title: d.title, abstract: d.abstract }))
 
   // Latest imported system record matched to any document of the family.
-  const { data: system } = await supabase
+  const { data: system } = await db
     .from('system_leases')
     .select('source, property, unit, tenant, external_id, status, lease_start, lease_end, area_sqft, monthly_base_rent, cam_monthly, tax_monthly, insurance_monthly, other_monthly, security_deposit, next_escalation_date, next_escalation_rent, created_at')
     .in('matched_lease_id', family.map((d) => d.id))
@@ -348,7 +351,7 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
   const message = await stream.finalMessage()
   console.log(JSON.stringify({ v: FUNCTION_VERSION, step: 'claude', familyId: root.id, stop: message.stop_reason, servedBy: message.model, usage: message.usage }))
 
-  await recordUsage(supabase, root, model, message, Date.now() - started)
+  await recordUsage(db, root, model, message, Date.now() - started)
 
   if (message.stop_reason === 'refusal') throw new Error('The AI model declined to assess this lease.')
   if (message.stop_reason === 'max_tokens') throw new Error('The AI response was cut off. Try again.')
@@ -397,7 +400,7 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
       }
     : null
 
-  const { error } = await supabase
+  const { error } = await db
     .from('lease_insights')
     .update({ status: 'ready', error: null, items, cam, rent, model: message.model ?? model, generated_at: new Date().toISOString() })
     .eq('lease_id', root.id)
@@ -405,9 +408,9 @@ async function generate(supabase: SupabaseClient, root: FamilyDoc, family: Famil
 }
 
 // deno-lint-ignore no-explicit-any
-async function recordUsage(supabase: SupabaseClient, root: FamilyDoc, model: string, message: any, durationMs: number) {
+async function recordUsage(db: Database, root: FamilyDoc, model: string, message: any, durationMs: number) {
   const usage = message.usage ?? {}
-  const { error } = await supabase.from('ai_usage').insert({
+  const { error } = await db.from('ai_usage').insert({
     process: 'insights',
     lease_id: root.id,
     file_id: root.file_id,

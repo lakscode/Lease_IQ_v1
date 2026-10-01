@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import type { Lease } from '../lib/leases'
 import { downloadCsv, reportRows, type ReportRow } from '../lib/reportRows'
 import { formatDate, formatNumber, useT } from '../i18n'
@@ -49,7 +49,7 @@ export function Reports() {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'end', desc: false })
 
   useEffect(() => {
-    supabase
+    db
       .from('leases')
       .select('*')
       .then(({ data, error }) => {

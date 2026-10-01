@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import {
   DOC_TYPE_LABELS,
   fetchFileUsage,
@@ -329,7 +329,7 @@ export function Details() {
   const { t: to } = useT(overview)
 
   const load = () =>
-    Promise.all([supabase.from('leases').select('*'), supabase.from('lease_files').select('*')]).then(
+    Promise.all([db.from('leases').select('*'), db.from('lease_files').select('*')]).then(
       ([leasesRes, filesRes]) => {
         const err = leasesRes.error ?? filesRes.error
         if (err) setError(err.message)

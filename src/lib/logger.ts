@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { db } from './db'
 
 export type LogLevel = 'info' | 'warn' | 'error'
 
@@ -74,7 +74,7 @@ export class FileLogger {
 
     const batch = this.queue.splice(0)
     const fileId = this.fileId
-    const { error } = await supabase.from('lease_file_logs').insert(batch.map((e) => ({ ...e, file_id: fileId })))
+    const { error } = await db.from('lease_file_logs').insert(batch.map((e) => ({ ...e, file_id: fileId })))
     if (error) {
       // Most likely the lease_file_logs migration has not been applied; keep console logging only.
       this.dbDisabled = true

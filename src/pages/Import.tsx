@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import { DOC_TYPE_LABELS, type Lease } from '../lib/leases'
 import {
   deleteImport,
@@ -77,7 +77,7 @@ export function Import() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    supabase
+    db
       .from('leases')
       .select('*')
       .order('title')

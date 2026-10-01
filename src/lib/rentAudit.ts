@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { db } from './db'
 import type { SavedSystemLease } from './imports'
 
 type Citation = { leaseId: string; title: string; page: number }
@@ -187,7 +187,7 @@ export function billingChecks(terms: RentTerms, system: SavedSystemLease, today 
 }
 
 export async function listRentAudits(familyId: string): Promise<SavedRentAudit[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('rent_audits')
     .select('*')
     .eq('lease_id', familyId)
@@ -203,7 +203,7 @@ export async function saveRentAudit(familyId: string, terms: RentTerms, inputs: 
   const months = new Set(monthsBetween(inputs.startMonth, inputs.endMonth))
   const billed = Object.fromEntries(Object.entries(inputs.billed).filter(([m, v]) => months.has(m) && v !== null))
   const saved = { ...inputs, billed }
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('rent_audits')
     .upsert(
       {
@@ -224,6 +224,6 @@ export async function saveRentAudit(familyId: string, terms: RentTerms, inputs: 
 }
 
 export async function deleteRentAudit(id: string) {
-  const { error } = await supabase.from('rent_audits').delete().eq('id', id)
+  const { error } = await db.from('rent_audits').delete().eq('id', id)
   if (error) throw new Error(error.message)
 }

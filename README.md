@@ -83,6 +83,29 @@ Every step is logged in three places:
 By default Supabase requires email confirmation on sign-up. Turn it off under
 **Authentication → Providers → Email** if you want instant login during development.
 
+## Database: Postgres or MongoDB
+
+Super admins choose the database on **Settings → Database engine**. Postgres (Supabase) is the
+default. With MongoDB chosen, every read and write of lease data (files, page text, leases,
+clauses, chats, insights, CAM reconciliations, rent audits, imports, edit history, logs and
+AI usage) goes to MongoDB, from the browser and from every Edge Function.
+
+- Set `MONGODB_URI` (and optionally `MONGODB_DB`, default `leaseiq`) as function secrets or in
+  `config.ts`, and deploy the `db` function (`npm run deploy` includes it). The browser cannot
+  reach MongoDB itself, so in MongoDB mode it sends each query to `db`, which runs it as the
+  signed-in user. MongoDB has no row level security, so the functions limit every query to the
+  caller's own documents (see `supabase/functions/_shared/db/mongo.ts`).
+- Sign-in, user roles (`users`), `app_settings` and the PDF files always stay on Supabase.
+- Switching does not move data. Use **Copy data from Postgres to MongoDB** first; it copies every
+  user's rows and leaves Postgres unchanged.
+- Queries go through `db` (`src/lib/db.ts` in the app, `createDb()` from
+  `supabase/functions/_shared/db` in functions) rather than `supabase.from(...)`. It accepts
+  the same builder calls the app uses; a new table must also be described in `TABLES` in
+  `mongo.ts` (columns, defaults, keys, foreign keys) to work on MongoDB.
+- Keyword search uses a MongoDB text index there instead of Postgres full-text search. Check
+  constraints are not enforced on MongoDB, and a multi-row write that fails part-way is not
+  rolled back.
+
 ## Limits
 
 - PDFs up to 50 MB.

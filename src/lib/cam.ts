@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { db } from './db'
 import { formatNumber } from '../i18n'
 
 /** CAM reconciliation terms extracted from the lease family (lease_insights.cam). -1 means not stated. */
@@ -157,7 +157,7 @@ export function statementDeadline(terms: CamTerms | null, year: number): Date | 
 export const money = (n: number) => formatNumber(n, { style: 'currency', currency: 'USD' })
 
 export async function listReconciliations(familyId: string): Promise<CamReconciliation[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('cam_reconciliations')
     .select('*')
     .eq('lease_id', familyId)
@@ -168,7 +168,7 @@ export async function listReconciliations(familyId: string): Promise<CamReconcil
 
 /** Saves the year's reconciliation, replacing any earlier one for the same year. */
 export async function saveReconciliation(familyId: string, year: number, inputs: CamInputs, notes: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('cam_reconciliations')
     .upsert(
       { lease_id: familyId, year, inputs, result: calculateCam(inputs), notes: notes || null, updated_at: new Date().toISOString() },
@@ -181,6 +181,6 @@ export async function saveReconciliation(familyId: string, year: number, inputs:
 }
 
 export async function deleteReconciliation(id: string) {
-  const { error } = await supabase.from('cam_reconciliations').delete().eq('id', id)
+  const { error } = await db.from('cam_reconciliations').delete().eq('id', id)
   if (error) throw new Error(error.message)
 }

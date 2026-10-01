@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { currentBackend, type DatabaseBackend, invokeDbFunction, setCurrentBackend } from './db'
 import { translator } from '../i18n'
 import { libSettings } from '../i18n/messages/libSettings'
 
@@ -36,4 +37,47 @@ export async function saveClaudeModel(model: string) {
     .from('app_settings')
     .upsert({ key: 'claude_model', value: model, updated_at: new Date().toISOString() })
   if (error) throw new Error(error.message)
+}
+
+/** The database chosen on the Settings page (Postgres unless MongoDB was saved). */
+export const fetchDatabaseBackend = (): Promise<DatabaseBackend> => currentBackend()
+
+export async function saveDatabaseBackend(backend: DatabaseBackend) {
+  const { error } = await supabase
+    .from('app_settings')
+    .upsert({ key: 'database', value: backend, updated_at: new Date().toISOString() })
+  if (error) throw new Error(error.message)
+  setCurrentBackend(backend)
+}
+
+export type DatabaseStatus = {
+  backend: DatabaseBackend
+  mongodbConfigured: boolean
+  connected: boolean
+  error: string | null
+  /** Tables stored in MongoDB when it is chosen, in the order they are copied. */
+  tables: string[]
+}
+
+/** Whether the Edge Functions can reach MongoDB (db Edge Function). */
+export const fetchDatabaseStatus = () => invokeDbFunction<DatabaseStatus>({ op: 'status' })
+
+/**
+ * Copies every user's rows from Postgres into MongoDB, a page at a time,
+ * replacing MongoDB documents with the same key. Postgres is not changed.
+ */
+export async function copyPostgresToMongo(tables: string[], onProgress: (table: string, copied: number) => void) {
+  let total = 0
+  for (const table of tables) {
+    let copiedInTable = 0
+    let offset: number | null = 0
+    while (offset !== null) {
+      const page: { copied: number; next: number | null } = await invokeDbFunction({ op: 'copy', table, offset })
+      copiedInTable += page.copied
+      total += page.copied
+      offset = page.next
+      onProgress(table, copiedInTable)
+    }
+  }
+  return total
 }

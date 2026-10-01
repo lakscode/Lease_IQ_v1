@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { db } from './db'
 import { getLanguageName, localizedRecord, translator } from '../i18n'
 import { common } from '../i18n/messages/common'
 import { libInsights } from '../i18n/messages/libInsights'
@@ -99,7 +100,7 @@ export const INSIGHTS_STALE_MS = 10 * 60 * 1000
 
 /** Insights of the family a document belongs to (keyed by its main lease). */
 export async function fetchInsights(familyId: string): Promise<LeaseInsights | null> {
-  const { data, error } = await supabase.from('lease_insights').select('*').eq('lease_id', familyId).maybeSingle()
+  const { data, error } = await db.from('lease_insights').select('*').eq('lease_id', familyId).maybeSingle()
   if (error) throw new Error(error.message)
   return data as LeaseInsights | null
 }

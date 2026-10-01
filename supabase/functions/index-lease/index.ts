@@ -8,9 +8,10 @@
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createDb } from '../_shared/db/index.ts'
 import { indexFile, removeFile, vectorsEnabled } from '../_shared/vectors.ts'
 
-const FUNCTION_VERSION = '1'
+const FUNCTION_VERSION = '2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -35,6 +36,8 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
     global: { headers: { Authorization: authHeader } },
   })
+  // Postgres or MongoDB, whichever is chosen in Settings.
+  const db = createDb(supabase, authHeader.replace('Bearer ', ''))
   const { data: userData, error: userError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
   if (userError || !userData.user) return json({ error: 'Not authenticated' }, 401)
   const userId = userData.user.id
@@ -44,12 +47,12 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}))
   try {
     if (body.all === true) {
-      const { data: files, error } = await supabase.from('lease_files').select('id').eq('status', 'completed')
+      const { data: files, error } = await db.from('lease_files').select('id').eq('status', 'completed')
       if (error) return json({ error: error.message }, 500)
       let chunks = 0
       let tokens = 0
       for (const file of files ?? []) {
-        const result = await indexFile(supabase, userId, file.id)
+        const result = await indexFile(db, userId, file.id)
         chunks += result.chunks
         tokens += result.tokens
       }
@@ -65,10 +68,10 @@ Deno.serve(async (req) => {
       return json({ removed })
     }
 
-    const { data: file, error } = await supabase.from('lease_files').select('id').eq('id', body.fileId).maybeSingle()
+    const { data: file, error } = await db.from('lease_files').select('id').eq('id', body.fileId).maybeSingle()
     if (error) return json({ error: error.message }, 500)
     if (!file) return json({ error: 'File not found' }, 404)
-    const result = await indexFile(supabase, userId, file.id)
+    const result = await indexFile(db, userId, file.id)
     console.log(JSON.stringify({ v: FUNCTION_VERSION, step: 'indexed', fileId: file.id, ...result }))
     return json({ indexed: true, ...result })
   } catch (err) {

@@ -6,7 +6,28 @@ import { useT } from '../i18n'
 import { auth } from '../i18n/messages/auth'
 import { common } from '../i18n/messages/common'
 
+/** Error returned by the identity provider in the redirect (query or hash), with the URL cleaned up. */
+function readOAuthError(): string | null {
+  const params = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.slice(1))
+  const text = params.get('error_description') ?? hash.get('error_description') ?? params.get('error') ?? hash.get('error')
+  if (text) window.history.replaceState(null, '', window.location.pathname)
+  return text ? text.replace(/\+/g, ' ') : null
+}
+
+function MicrosoftLogo() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden>
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
+  )
+}
+
 export function Login() {
+  const [oauthError] = useState(readOAuthError)
   const { session } = useAuth()
   const { t } = useT(auth)
   const { t: tc } = useT(common)
@@ -15,10 +36,26 @@ export function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // A failed Microsoft sign-in comes back to this page with the reason in the URL.
+  const [error, setError] = useState<string | null>(oauthError)
   const [message, setMessage] = useState<string | null>(null)
 
   if (session) return <Navigate to="/dashboard" replace />
+
+  const signInWithMicrosoft = async () => {
+    setLoading(true)
+    setError(null)
+    setMessage(null)
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'azure',
+      // `email` is needed for Supabase to create the account; the browser leaves for Microsoft on success.
+      options: { scopes: 'openid profile email', redirectTo: `${window.location.origin}/login` },
+    })
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -49,6 +86,12 @@ export function Login() {
     <main className="center">
       <form className="card auth-card" onSubmit={handleSubmit}>
         <h2>{mode === 'login' ? t('welcomeBack') : t('createAccount')}</h2>
+
+        <button className="btn btn-ghost btn-microsoft" type="button" onClick={signInWithMicrosoft} disabled={loading}>
+          <MicrosoftLogo />
+          {t('continueWithMicrosoft')}
+        </button>
+        <div className="auth-divider"><span>{t('or')}</span></div>
 
         <label>
           {t('email')}

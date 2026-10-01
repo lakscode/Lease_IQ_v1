@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { db } from './db'
 import type { ExtractedPage } from './pdf'
 import { errorData, FileLogger, type LogLevel } from './logger'
 import { formatNumber, localizedRecord, translator, type Vars } from '../i18n'
@@ -165,7 +166,7 @@ export async function updateLeaseDetails(lease: Lease, changes: Partial<Record<E
   if (!Object.keys(patch).length) return lease
   patch.edited_at = new Date().toISOString()
 
-  const { data, error } = await supabase.from('leases').update(patch).eq('id', lease.id).select('*').single()
+  const { data, error } = await db.from('leases').update(patch).eq('id', lease.id).select('*').single()
   if (error) throw new Error(error.message)
   return data as Lease
 }
@@ -182,7 +183,7 @@ export type LeaseEdit = {
 }
 
 export async function fetchLeaseEdits(leaseId: string): Promise<LeaseEdit[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('lease_edits')
     .select('*')
     .eq('lease_id', leaseId)
@@ -210,7 +211,7 @@ export type LeaseClause = {
 export const LOW_CONFIDENCE_SCORE = 0
 
 export async function fetchLeaseClauses(leaseId: string): Promise<LeaseClause[]> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('lease_clauses')
     .select('*')
     .eq('lease_id', leaseId)
@@ -283,7 +284,7 @@ const elapsed = (start: number) => Math.round(performance.now() - start)
 async function markFailed(fileId: string, err: unknown, log: FileLogger) {
   const message = err instanceof Error ? err.message : String(err)
   log.error('failed', `Processing failed: ${message}`, errorData(err))
-  const { error } = await supabase.from('lease_files').update({ status: 'failed', error: message }).eq('id', fileId)
+  const { error } = await db.from('lease_files').update({ status: 'failed', error: message }).eq('id', fileId)
   if (error) log.error('failed', 'Could not mark file as failed', { error: error.message })
   else log.info('status', 'File status set to failed')
 }
@@ -294,7 +295,7 @@ async function savePages(fileId: string, pages: ExtractedPage[], log: FileLogger
   log.info('save-pages', `Saving text of ${rows.length} page(s)`)
   for (let i = 0; i < rows.length; i += 100) {
     const batch = rows.slice(i, i + 100)
-    const { error } = await supabase.from('lease_file_pages').upsert(batch)
+    const { error } = await db.from('lease_file_pages').upsert(batch)
     if (error) throw new Error(lt('err_save_pages', { detail: error.message }))
     log.info('save-pages', `Saved pages ${i + 1}-${i + batch.length}`)
   }
@@ -343,7 +344,7 @@ export async function uploadLeaseFile(file: File, onStage: (s: Stage) => void, p
   log.info('upload', 'Original PDF uploaded', { ms: elapsed(uploadStarted) })
 
   const ocrPages = pages.filter((p) => p.is_ocr).length
-  const { error: insertError } = await supabase.from('lease_files').insert({
+  const { error: insertError } = await db.from('lease_files').insert({
     id: fileId,
     file_name: file.name,
     storage_path: storagePath,
@@ -401,7 +402,7 @@ export async function retryLeaseFile(
     const bytes = new Uint8Array(await blob.arrayBuffer())
     log.info('retry', 'Original PDF downloaded', { bytes: bytes.length, ms: elapsed(downloadStarted) })
 
-    const { count, error: countError } = await supabase
+    const { count, error: countError } = await db
       .from('lease_file_pages')
       .select('*', { count: 'exact', head: true })
       .eq('file_id', file.id)
@@ -486,7 +487,7 @@ async function analyzeAndSplit(
   for (;;) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
     polls++
-    const { data: row, error: pollError } = await supabase
+    const { data: row, error: pollError } = await db
       .from('lease_files')
       .select('status, error')
       .eq('id', fileId)
@@ -516,7 +517,7 @@ async function splitAndStore(
   onStage: (s: Stage) => void,
   log: FileLogger,
 ) {
-  const { data: leases, error } = await supabase
+  const { data: leases, error } = await db
     .from('leases')
     .select('id, doc_type, title, page_start, page_end')
     .eq('file_id', fileId)
@@ -535,14 +536,14 @@ async function splitAndStore(
     log.info('split', `Removed ${stale.length} split file(s) from an earlier run`)
   }
 
-  const { data: fileRow } = await supabase.from('lease_files').select('page_count').eq('id', fileId).single()
+  const { data: fileRow } = await db.from('lease_files').select('page_count').eq('id', fileId).single()
   const pageCount = fileRow?.page_count ?? 0
   const wholeFile = leases.length === 1 && leases[0].page_start === 1 && leases[0].page_end >= pageCount
 
   if (wholeFile) {
     // Nothing to split: the document is the original upload.
     log.info('split', 'Single document covers the whole file; no split needed')
-    const { error: updErr } = await supabase.from('leases').update({ storage_path: storagePath }).eq('id', leases[0].id)
+    const { error: updErr } = await db.from('leases').update({ storage_path: storagePath }).eq('id', leases[0].id)
     if (updErr) throw new Error(updErr.message)
   } else {
     const { splitPdf } = await import('./pdf')
@@ -555,13 +556,13 @@ async function splitAndStore(
         .from(BUCKET)
         .upload(path, parts[i], { contentType: 'application/pdf', upsert: true })
       if (upErr) throw new Error(lt('err_upload_split', { n: i + 1, detail: upErr.message }))
-      const { error: updErr } = await supabase.from('leases').update({ storage_path: path }).eq('id', leases[i].id)
+      const { error: updErr } = await db.from('leases').update({ storage_path: path }).eq('id', leases[i].id)
       if (updErr) throw new Error(updErr.message)
       log.info('split', `Stored part ${i + 1}/${leases.length}: ${leases[i].title}`, { path, ms: elapsed(upStarted) })
     }
   }
 
-  const { error: doneErr } = await supabase
+  const { error: doneErr } = await db
     .from('lease_files')
     .update({ status: 'completed', error: null, processed_at: new Date().toISOString() })
     .eq('id', fileId)
@@ -579,7 +580,7 @@ async function splitAndStore(
  * lease-insights Edge Function; a failure is logged but never fails the upload.
  */
 async function generateInsights(fileId: string, log: FileLogger) {
-  const { data: docs, error } = await supabase.from('leases').select('id, parent_id').eq('file_id', fileId)
+  const { data: docs, error } = await db.from('leases').select('id, parent_id').eq('file_id', fileId)
   if (error) {
     log.warn('insights', `Could not load documents for insights: ${error.message}`)
     return
@@ -630,7 +631,7 @@ export async function deleteLeaseFile(file: LeaseFile) {
   const paths = (objects ?? []).map((o) => `${folder}/${o.name}`)
   if (paths.length) await supabase.storage.from(BUCKET).remove(paths)
   console.info(`[lease ${file.id.slice(0, 8)}] delete: removed ${paths.length} stored PDF(s)`)
-  const { error } = await supabase.from('lease_files').delete().eq('id', file.id)
+  const { error } = await db.from('lease_files').delete().eq('id', file.id)
   if (error) {
     console.error(`[lease ${file.id.slice(0, 8)}] delete: failed`, error.message)
     throw new Error(error.message)
@@ -653,7 +654,7 @@ export async function openStoredPdf(path: string) {
 }
 
 export async function fetchPageText(fileId: string, start: number, end: number) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('lease_file_pages')
     .select('page_number, text, is_ocr')
     .eq('file_id', fileId)
@@ -665,7 +666,7 @@ export async function fetchPageText(fileId: string, start: number, end: number) 
 }
 
 export async function fetchFileLogs(fileId: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('lease_file_logs')
     .select('*')
     .eq('file_id', fileId)
@@ -707,7 +708,7 @@ export function formatTokens(n: number) {
 }
 
 export async function fetchFileUsage(fileId: string): Promise<AiUsage[]> {
-  const { data, error } = await supabase.from('ai_usage').select('*').eq('file_id', fileId).order('created_at')
+  const { data, error } = await db.from('ai_usage').select('*').eq('file_id', fileId).order('created_at')
   if (error) throw new Error(error.message)
   return data as AiUsage[]
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
+import { db } from '../lib/db'
 import { ABSTRACT_LABELS, DOC_TYPE_LABELS, type Lease, type LeaseFile } from '../lib/leases'
 import { daysFromToday, leaseTerms } from '../lib/leaseStatus'
 import { UploadAmendmentButton } from '../components/UploadAmendment'
@@ -39,7 +39,7 @@ export function LeaseOverview() {
   const [error, setError] = useState<string | null>(null)
 
   const load = () =>
-    Promise.all([supabase.from('leases').select('*'), supabase.from('lease_files').select('*')]).then(([leasesRes, filesRes]) => {
+    Promise.all([db.from('leases').select('*'), db.from('lease_files').select('*')]).then(([leasesRes, filesRes]) => {
       const err = leasesRes.error ?? filesRes.error
       if (err) setError(err.message)
       setLeases(leasesRes.data ?? [])

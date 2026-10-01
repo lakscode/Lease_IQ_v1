@@ -1,9 +1,9 @@
-import { supabase } from './supabase'
+import { db } from './db'
 import { translator, type Vars } from '../i18n'
 import { libHealth } from '../i18n/messages/libHealth'
 
 // Must match FUNCTION_VERSION in supabase/functions/analyze-lease/index.ts.
-export const EXPECTED_FUNCTION_VERSION = '14'
+export const EXPECTED_FUNCTION_VERSION = '15'
 
 export type SetupIssue = { key: string; message: string }
 
@@ -21,7 +21,7 @@ const issue = (key: string, messageKey: HealthKey, vars?: () => Vars): SetupIssu
 export async function checkSetup(): Promise<SetupIssue[]> {
   const issues: SetupIssue[] = []
 
-  const { error: logsError } = await supabase.from('lease_file_logs').select('id', { head: true, count: 'exact' }).limit(1)
+  const { error: logsError } = await db.from('lease_file_logs').select('id', { head: true, count: 'exact' }).limit(1)
   if (logsError) {
     console.warn('[setup] lease_file_logs check failed:', logsError.message)
     issues.push(issue('logs-table', 'logsTable', () => ({ file: 'supabase/migrations/20260923010000_lease_file_logs.sql' })))

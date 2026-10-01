@@ -3,6 +3,8 @@ import { defineMessages } from '..'
 // Login, sign-up, forgot password and reset password pages.
 export const auth = defineMessages({
   en: {
+    continueWithMicrosoft: 'Continue with Microsoft',
+    or: 'or',
     welcomeBack: 'Welcome back',
     createAccount: 'Create an account',
     email: 'Email',
@@ -28,6 +30,8 @@ export const auth = defineMessages({
     updatePassword: 'Update password',
   },
   de: {
+    continueWithMicrosoft: 'Weiter mit Microsoft',
+    or: 'oder',
     welcomeBack: 'Willkommen zurück',
     createAccount: 'Konto erstellen',
     email: 'E-Mail',
@@ -53,6 +57,8 @@ export const auth = defineMessages({
     updatePassword: 'Passwort ändern',
   },
   es: {
+    continueWithMicrosoft: 'Continuar con Microsoft',
+    or: 'o',
     welcomeBack: 'Bienvenido de nuevo',
     createAccount: 'Crear una cuenta',
     email: 'Correo electrónico',
@@ -78,6 +84,8 @@ export const auth = defineMessages({
     updatePassword: 'Actualizar contraseña',
   },
   pt: {
+    continueWithMicrosoft: 'Continuar com a Microsoft',
+    or: 'ou',
     welcomeBack: 'Bem-vindo de volta',
     createAccount: 'Criar uma conta',
     email: 'E-mail',
@@ -103,6 +111,8 @@ export const auth = defineMessages({
     updatePassword: 'Atualizar senha',
   },
   it: {
+    continueWithMicrosoft: 'Continua con Microsoft',
+    or: 'oppure',
     welcomeBack: 'Bentornato',
     createAccount: 'Crea un account',
     email: 'Email',
