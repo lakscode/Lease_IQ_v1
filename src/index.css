@@ -724,6 +724,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .dialog-content h3 { margin: 0.35rem 0 0.4rem; font-size: 1.05rem; }
 .dialog-message { color: var(--muted); font-size: 0.9rem; line-height: 1.55; word-break: break-word; }
 .dialog-message strong { color: var(--text); }
+.dialog.user-form { grid-template-columns: 1fr; gap: 0.9rem; }
+.dialog.user-form h3 { margin: 0; font-size: 1.05rem; }
+.dialog.user-form p { margin: 0; }
+.dialog.user-form .dialog-actions { margin-top: 0.4rem; }
 .dialog-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; }
 @keyframes dialog-fade { from { opacity: 0; } }
 @keyframes dialog-pop { from { opacity: 0; transform: translateY(8px) scale(0.97); } }

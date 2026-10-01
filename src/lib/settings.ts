@@ -81,3 +81,45 @@ export async function copyPostgresToMongo(tables: string[], onProgress: (table: 
   }
   return total
 }
+
+export type UserRole = 'superadmin' | 'user'
+
+export type AppUser = {
+  id: string
+  email: string | null
+  role: UserRole
+  created_at: string
+  last_sign_in_at: string | null
+  confirmed: boolean
+}
+
+/** Calls the admin-users Edge Function (super admins only); its errors are thrown with their message. */
+async function adminUsers<T>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke('admin-users', { body })
+  if (!error) return data as T
+  let message = error.message
+  if (error.name === 'FunctionsFetchError' || error.context?.status === 404) {
+    message = 'The "admin-users" Edge Function is not deployed to your Supabase project. Run npm run deploy.'
+  } else {
+    try {
+      message = (await error.context.json()).error ?? message
+    } catch {
+      // Not a JSON error response; keep the generic message.
+    }
+  }
+  throw new Error(message)
+}
+
+/** Every registered account with its role and last sign-in. */
+export const listUsers = () => adminUsers<{ users: AppUser[] }>({ op: 'list' }).then((r) => r.users)
+
+/** Creates a confirmed account that can log in at once. */
+export const createUser = (email: string, password: string, role: UserRole) =>
+  adminUsers<{ user: AppUser }>({ op: 'create', email, password, role }).then((r) => r.user)
+
+/** Changes email, role and/or password (password only when given). */
+export const updateUser = (id: string, changes: { email?: string; role?: UserRole; password?: string }) =>
+  adminUsers<{ user: AppUser }>({ op: 'update', id, ...changes }).then((r) => r.user)
+
+/** Deletes the account with all its files, leases and other data. */
+export const deleteUser = (id: string) => adminUsers<{ deleted: boolean }>({ op: 'delete', id })
