@@ -337,10 +337,8 @@ email_optional = false
 # the Supabase dashboard: Authentication -> Sign In / Providers -> Azure.
 [auth.external.azure]
 enabled = false
-# client_id = "env(SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID)"
-client_id = "c28bb6b5-3721-4c7a-b6e3-d4b9503aa080"
-# secret = "env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"
-secret = "2Fd_kN7GXy19Rs7Mg2z_K2Caj4Ji-rk4EFyqfW-Bxmo"
+client_id = "env(SUPABASE_AUTH_EXTERNAL_AZURE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_AZURE_SECRET)"
 redirect_uri = "https://login.microsoftonline.com"
 # https://login.microsoftonline.com/<tenant-id> to allow only your organization; empty allows any Microsoft account.
 url = ""
