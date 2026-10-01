@@ -68,7 +68,12 @@ export function Login() {
       if (error) setError(error.message)
       else navigate('/dashboard')
     } else {
-      const { data, error } = await supabase.auth.signUp({ email, password })
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        // Back to this site after confirming; otherwise the dashboard's Site URL is used.
+        options: { emailRedirectTo: `${window.location.origin}/login` },
+      })
       if (error) setError(error.message)
       else if (!data.session) setMessage(t('confirmEmail'))
       else navigate('/dashboard')
