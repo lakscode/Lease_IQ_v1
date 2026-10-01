@@ -74,7 +74,9 @@ export function Login() {
         // Back to this site after confirming; otherwise the dashboard's Site URL is used.
         options: { emailRedirectTo: `${window.location.origin}/login` },
       })
-      if (error) setError(error.message)
+      if (error) setError(error.code === 'user_already_exists' ? t('emailExists') : error.message)
+      // With email confirmation on, Supabase answers an existing address with a user that has no identities.
+      else if (data.user && data.user.identities?.length === 0) setError(t('emailExists'))
       else if (!data.session) setMessage(t('confirmEmail'))
       else navigate('/dashboard')
     }
